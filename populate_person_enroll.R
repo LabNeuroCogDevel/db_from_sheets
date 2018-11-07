@@ -3,7 +3,7 @@
 library(dplyr)
 library(dbplyr)
 # depends on valid ~/.pgpass
-con <- DBI::dbConnect(RPostgreSQL::PostgreSQL(), user="lncd", dbname="lncddb")
+con <- DBI::dbConnect(RPostgreSQL::PostgreSQL(),host="arnold.wpic.upmc.edu", user="postgres", dbname="lncddb")
 
 add_id_to_db <- function(con, d) {
 
@@ -26,7 +26,7 @@ add_id_to_db <- function(con, d) {
       merge(d, by=c("fname", "lname", "dob"))
 
    if (nrow(missing_id) > 0L){
-      cat("have person but not lunaid in databae!?\n")
+      cat("have person but not lunaid in database!?\n")
       cat("in sheet:\n")
       print(missing_id)
       cat("in db\n")
@@ -83,6 +83,78 @@ add_id_to_db <- function(con, d) {
    if (nrow(to_add)>0L) db_insert_into(con, "enroll", to_add)
 }
 
+get_vids <- function(pid_df) {
+    visit_mash <- with(pid_df, paste(pid, vtype, vtimestamp))
+    have_vid <-
+       tbl(con, "visit") %>%
+       filter(paste(pid, vtype, vtimestamp) %in% visit_mash) %>%
+       collect %>%
+       merge(pid_df %>% select(pid,id),by="pid")
+}
+get_vstudy <- function(vids_df){
+    mash <- with(vids_df, paste(vid, study))
+    have_vid <-
+       tbl(con, "visit_study") %>%
+       filter(paste(vid, study) %in% mash) %>%
+       collect %>%
+       merge(vids_df,by=c("vid","study"))
+}
+missing_warn <- function(toadd,db,msg,column="id") {
+    mis <- setdiff(unlist(toadd[,column]), db[,column])
+    if(length(mis)>0L)
+        warning("missing ", column, " in ", msg, " db: ", paste(sep=",",mis), "\n")
+}
+
+add_visit <- function(d) {
+    # input
+    # df(lunaid,vtype,vscore,vtimestamp,vistno,ra,study,cohort) 
+    if(! all(names(d) %in%
+             c('id','vtype','vscore','vtimestamp','visitno','ra','study','age','study')) )
+        stop("add_visit not given dataframe will required colums")
+
+    # format for db
+    d$vtimestamp=format(d$vtimestamp,format="%Y-%m-%d %H:%M:%S",tz="UTC")
+    if(!"vstatus" %in% names(d)) d$vstatus='checkedin'
+
+    # get pid
+    pid_df <- tbl(con,"enroll") %>%
+        filter(etype %like% "LunaID") %>%
+        select(pid,id,-etype) %>%
+        merge(d,by="id")
+
+    # warn about missing (lunaid (and maybe person) not in database)
+    missing_warn(d,pid_df,"enroll")
+
+    ## find vid or create vid
+    vids_df <- get_vids(pid_df)
+    to_add <- anti_join(pid_df, vids_df, by="pid")
+    # add visit
+    if(nrow(to_add)>0L){
+        to_add %>%
+            select(pid,vtype,vscore,vtimestamp,visitno,vstatus,age) %>%
+            db_insert_into(con, "visit", .)
+        # refetch all vids
+        vids_df <- get_vids(pid_df)
+    }
+    missing_warn(pid_df,vids_df, "visit")
+    
+
+    # add visit_action
+    #  vid,action=='checkedin' (vs sched), ra
+    # add visit_study
+    #  vid, study, cohort
+
+    to_add_study <-
+        get_vstudy(vids_df) %>%
+        anti_join(vids_df,by=c("vid","study")) %>%
+        # get study back
+        merge(d, by=c("pid","vtimestamp","vtype"))
+
+    to_add_study %>%
+     select(vid, study, cohort) %>%
+     db_insert_into(con, "visit_study", .)
+}
+
 
 # get p5 data
 p5 <-
@@ -111,3 +183,38 @@ pet <-
           hand="U")
 
 add_id_to_db(con, pet)
+
+###### 7T 
+sevenTxlsx <- readxl::read_xlsx("sheets/7T.xlsx", sheet="Enrolled") 
+
+## insert people
+BrnMch7T <- sevenTxlsx %>%
+    select(id=`Luna ID`, dob=DOB,
+           fname=`First Name`, lname=`Last Name`,
+           adddate=`Date Enrolled`, sex=`Gender`,source=Source) %>%
+    mutate(id=as.character(id),
+           dob=lubridate::ymd(dob),
+           adddate=as.Date(as.numeric(adddate),origin="1899-12-30"),
+           hand="U") %>%
+    filter(!is.na(id))
+
+add_id_to_db(con, BrnMch7T)
+
+## get calendar info -- buggy, use `gcalcli`
+# devtools::install_github("jdeboer/gcalendar")
+#library(gcalendar)
+#creds <- GoogleApiCreds(appCreds = "secret.json")
+#calve <- gCalendar$new(creds=creds, id="lunalncd@gmail.com")$events
+
+
+# okay if this fails -- only need to have inserted once will fail if tried again
+data.frame(study="BrainMechR01", grantname="BrainMechR01") %>% 
+    db_insert_into(con, "study", .)
+
+BM7T_visit <-
+    sevenTxlsx %>% 
+    select(id=`Luna ID`,
+           age=`Age @ Y1 Behav`,
+           vtimestamp=`Y1 Behav Date`) %>%
+    mutate(vtype="Behavioral", ra="db_add",vscore=NA, visitno=1, study="BrainMechR01")
+

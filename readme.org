@@ -1,0 +1,10 @@
+* Pull spreadsheet data into the database
+** Available
+   * ~./Makefile~ - handles depends (gets xlsunpass), remove passwords
+   * ~sheets_pass.list~ - while files to decode
+   * ./pet_demo.R - get pet demographic
+   * ./populate_person_enroll.R
+** Stuff to worry about
+   - list all sheets
+   
+
