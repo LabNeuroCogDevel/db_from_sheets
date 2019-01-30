@@ -1,47 +1,4 @@
-#!/usr/bin/env Rscript
-cat("loading packages, connect to db\n")
-suppressPackageStartupMessages({
- library(dplyr)
- library(dbplyr)
- library(lubridate)
- library(stringr)
-})
-
 source("db_insert.R")
-
-
-cat("P5\n")
-# get p5 data
-p5 <-
-   readxl::read_xlsx("sheets/P5.xlsx", sheet="P5 Completed") %>%
-   select(id=`Luna ID`, dob=`DOB`,
-         fname=`First Name`, lname=`Last Name`,
-         adddate=`fMRI Date`, sex=`Sex`) %>%
-   mutate(id=as.character(id),
-          dob=lubridate::ymd(dob),
-          hand="U")
-
-# add id's to DB
-add_id_to_db(con, p5)
-
-
-
-cat("PET\n")
-pet <-
-   readxl::read_xlsx("sheets/PET.xlsx", sheet="Completed") %>%
-   select(id=`Luna ID`, dob=`DOB`,
-         fname=`First Name`, lname=`Last Name`,
-         adddate=`x1 Beh Date`, sex=`Sex`) %>%
-   filter(!is.na(fname)) %>%
-   mutate(id=as.character(id),
-          dob=dob,
-          adddate=adddate,
-          hand="U")
-
-add_id_to_db(con, pet)
-
-###### 7T 
-cat("7T\n")
 sevent_xlsx <- readxl::read_xlsx("sheets/7T.xlsx", sheet="Enrolled")
 
 ## insert people
@@ -136,6 +93,7 @@ match_7t_cal <- function(d, cal, vtype) {
                    gsub("[- ]*", "", .),
               study="BrainMechR01",
               cohort="Control",
+              vtype=cal_vtype_fix(vtype),
               age=age.x)
 
      nmatch <- length(which(!is.na(m$sdate)))

@@ -1,14 +1,58 @@
 #
 # database insert functions
 #
+require(dbplyr) # db_insert_into
+
+read_gcal <- function(txt_file="txt/cal_events.csv") {
+  calv <-
+     read.csv(txt_file) %>%
+     mutate(sdate=ymd_hms(sdate)) %>%
+      filter(!grepl("cancelled", desc)) %>%
+      mutate(vtimestamp=format(sdate, "%Y-%m-%d"),
+             sex=sex%>%toupper)
+}
+
+get_cal_ra <- function(desc, RAs=c("KS", "JF", "JL", "JG", "MM", "LT")) {
+   ra_regexp <- paste(sep="|", collapse="|", RAs)
+   # get ra from desc
+   ra_f <-  sprintf("(?<=- )(%s)",      ra_regexp) %>% str_extract(desc, .)
+   ra_b <-  sprintf("(%s)(?=$| -|\\()", ra_regexp) %>% str_extract(desc, .)
+   ra_a <-  sprintf("(%s)",             ra_regexp) %>% str_extract(desc, .)
+   ra <- ifelse(is.na(ra_f), ra_b, ra_f)
+   ra <- ifelse(is.na(ra), ra_a, ra)
+   return(ra)
+}
+
+# get initials by remove () and [] and taking only first character
+# as uppercase
+rm_name_annotation <- function(name) gsub("[[\\(].*[]\\)]", "", name)
+name_first_letter <- function(name) name %>% rm_name_annotation %>% substr(0, 1)
+mk_initials <- function(fname, lname) {
+      paste0(name_first_letter(fname), name_first_letter(lname)) %>%
+      toupper
+}
+cal_vtype_fix <- function(vtype) {
+   vtype <- ifelse(vtype=="scan", "Scan", vtype)
+   vtype <- ifelse(vtype=="behav", "Behavioral", vtype)
+   return(vtype)
+}
 
 # if any cell in date column is not a date (e.g. "1/9 or 1/10")
 # all dates will be given as days since 1899-12-30 as a string (e.g "43488")
 xlsx_date <- function(x, msg=NULL) {
+   if (length(x) == 0L) return() # otherwise would error at bottom
    if (is.null(msg)) msg <- substitute(x)
-   if (is.character(x))
-      x <- as.Date(as.numeric(x), origin="1899-12-30")
-   # should be 12-30, date is off by one!?
+   if (is.character(x)) {
+      xn <- as.numeric(x)
+      x <- as.Date(xn, origin="1899-12-30")
+
+      # if number is really high, unix epoch instead of xlsx date
+      # ifelse converts to numeric? so use this:
+      e_i <- !is.na(xn) & xn>10^9
+      if (any(e_i))
+       x[e_i] <- as.Date(as.POSIXct(xn[e_i], origin="1970-01-01"))
+   }
+
    if (!any(na.omit(between(year(x), 2015, 2024))))
      stop(msg, ": xlsx date parse failure (", head(x),
           " ): outside of range 2015-2024")
@@ -16,8 +60,10 @@ xlsx_date <- function(x, msg=NULL) {
 }
 
 # depends on valid ~/.pgpass
+db_host <- "arnold.wpic.upmc.edu"
+db_host <- "localhost"
 con <- DBI::dbConnect(RPostgreSQL::PostgreSQL(),
-                      host="arnold.wpic.upmc.edu",
+                      host=db_host,
                       user="postgres",
                       dbname="lncddb")
 
@@ -61,13 +107,19 @@ add_aux_id <- function(con, d) {
    # now we add the aux ids that are still missing
    to_add <-
       anti_join(have_pid, have_auxid, by="pid") %>%
-      select(pid, id, etype, edate)
+      select(pid, id, etype, edate) %>%
+      unique
 
-   if (nrow(to_add)>0L) db_insert_into(con, "enroll", to_add)
+   if (nrow(to_add)>0L) {
+      return(db_insert_into(con, "enroll", to_add))
+   } else {
+      warning("no ids to add!")
+      return(F)
+   }
 }
 
 # insert person, get pid, insert int oenroll
-add_id_to_db <- function(con, d) {
+add_id_to_db <- function(con, d,  double_ok_list=NULL) {
 
    # shouldn't match any pid
    person_mashed <- with(d, paste(fname, lname, dob))
@@ -134,6 +186,14 @@ add_id_to_db <- function(con, d) {
       filter(etype %like% "LunaID", pid %in% pid$pid) %>%
       collect
 
+   # if we are allowing muple lunaIDs for a single pid
+   # remove pids from have_enroll that match the list
+   if (!is.null(double_ok_list)) {
+      have_enroll <-
+         have_enroll %>%
+         filter(!id  %in% double_ok_list)
+   }
+
    # only add those who haven't
    to_add<-
       pid %>%
@@ -167,7 +227,7 @@ missing_warn <- function(toadd, db, msg, column="id") {
                 " db: ", paste(sep=",", mis), "\n")
 }
 
-add_visit <- function(d) {
+add_visit <- function(d, con=con) {
     # input
     # df(lunaid,vtype,vscore,vtimestamp,vistno,ra,study,cohort)
     req_cols <- c("id", "vtype", "vscore", "vtimestamp",
@@ -197,7 +257,7 @@ add_visit <- function(d) {
     vids_df <- get_vids(pid_df)
     to_add <- anti_join(pid_df, vids_df, by="pid")
     # add visit
-    if(nrow(to_add)>0L){
+    if (nrow(to_add)>0L){
         to_add %>%
             select(pid, vtype, vscore, vtimestamp, visitno, vstatus, age) %>%
             db_insert_into(con, "visit", .)
