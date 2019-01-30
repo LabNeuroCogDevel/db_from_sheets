@@ -1,7 +1,21 @@
 #
 # database insert functions
 #
-require(dbplyr) # db_insert_into
+cat("loading packages, connect to db\n")
+suppressPackageStartupMessages({
+ library(dplyr)
+ library(dbplyr)
+ library(lubridate)
+ library(stringr)
+})
+
+# depends on valid ~/.pgpass
+db_host <- "arnold.wpic.upmc.edu"
+db_host <- "localhost"
+con <- DBI::dbConnect(RPostgreSQL::PostgreSQL(),
+                      host=db_host,
+                      user="postgres",
+                      dbname="lncddb")
 
 read_gcal <- function(txt_file="txt/cal_events.csv") {
   calv <-
@@ -59,14 +73,6 @@ xlsx_date <- function(x, msg=NULL) {
    x <- format(x, "%Y-%m-%d")
 }
 
-# depends on valid ~/.pgpass
-db_host <- "arnold.wpic.upmc.edu"
-db_host <- "localhost"
-con <- DBI::dbConnect(RPostgreSQL::PostgreSQL(),
-                      host=db_host,
-                      user="postgres",
-                      dbname="lncddb")
-
 # okay if this fails -- only need to have inserted once
 #will fail if tried again
 insert_study <- function(study, grant) {
@@ -80,16 +86,19 @@ insert_study <- function(study, grant) {
 # give: dataframe with lunaid, id, etype
 # find pid from lunaid, add auxid
 add_aux_id <- function(con, d) {
+   # collect all now, avoid  "promise already under evaluation"
+   all_enroll <- tbl(con, "enroll") %>%
+      collect
+
    need_cols <- c("lunaid", "id", "etype", "edate")
    if (!all(names(d) %in% need_cols ))
       stop("missing needed columns for aux id insert: ",
            paste(collapse=", ", setdiff(need_cols, names(d))))
    have_pid <-
-      tbl(con, "enroll") %>%
-      filter(etype %like% "LunaID") %>%
+      all_enroll %>%
+      filter(grepl("LunaID", etype)) %>%
       select(pid, lunaid=id) %>%
-      inner_join(., d, by="lunaid", copy=T) %>%
-      collect
+      inner_join(., d, by="lunaid", copy=T)
 
    if (nrow(have_pid) != nrow(d))
       warning("no lunaid in db for: ",
@@ -97,9 +106,9 @@ add_aux_id <- function(con, d) {
 
    # dont add if already exists
    have_auxid <-
-      tbl(con, "enroll") %>%
-      filter(id %in% d$id) %>%
-      collect
+      all_enroll %>%
+      filter(id %in% d$id)
+
    if (nrow(have_auxid) > 0)
       warning("already have aux enroll ", nrow(have_auxid),
               " of ", nrow(have_pid), " with known pids")
@@ -111,7 +120,8 @@ add_aux_id <- function(con, d) {
       unique
 
    if (nrow(to_add)>0L) {
-      return(db_insert_into(con, "enroll", to_add))
+      db_insert_into(con, "enroll", to_add) %>%
+         return()
    } else {
       warning("no ids to add!")
       return(F)
@@ -158,12 +168,17 @@ add_id_to_db <- function(con, d,  double_ok_list=NULL) {
       anti_join(have_lunaid, by="id") %>%
       anti_join(have_pid, by=c("fname", "lname"))
    # add people not in database (as either a person or lunaid)
-   db_insert_into(con, "person", people_to_add %>% select(-id))
+   people_to_add %>%
+      select(-id) %>%
+      db_insert_into(con, "person", .)
 
-   to_enroll <- rbind(people_to_add, missing_id %>% select(-pid))
+   to_enroll <-
+      missing_id %>%
+      select(-pid) %>%
+      rbind(people_to_add, .)
 
    enroll_mash <- with(to_enroll, paste(fname, lname, dob))
-   if(length(enroll_mash) == 0L){
+   if (length(enroll_mash) == 0L){
       warning("everyone is enrolled already!")
       return()
    }
