@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 
 #
 # get all calendar events since 2015

@@ -1,12 +1,12 @@
 add_db: all_gcal_events.tsv unpass 
-	./populate_person_enroll.R
-
-all_gcal_events.tsv:
-	./01_getCalendar.bash
+	./02_populate_db_from_sheets.R
 
 unpass: sheets_pass.list xlsxunpass.jar
 	 # removes passwords
 	./00_getsheets.bash
+
+all_gcal_events.tsv:
+	./01_getCalendar.bash
 
 xlsxunpass.jar:
 	 # get xlsxunpass

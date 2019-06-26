@@ -1,5 +1,4 @@
-source("db_insert.R")
-sevent_xlsx <- readxl::read_xlsx("sheets/7T.xlsx", sheet="Enrolled")
+#source("db_insert.R")
 
 ## insert people
 idcols_7t <- function(sevent_xlsx) {
@@ -23,41 +22,6 @@ aux_id_7t <- function(d, id_colname, etype){
     mutate(lunaid=as.character(lunaid) ) %>%
     mutate(etype=etype)
 }
-
-#brn_mch_7t <-lapply(list(sevent_xlsx, sevenTxlsx_drop),  idcols_7t) %>% bind_rows
-brn_mch_7t <-idcols_7t(sevent_xlsx)
-
-add_id_to_db(con, brn_mch_7t, double_ok_list=c("11390"))
-
-# add QualitricsID for those that have a lunaid
-
-aux_id_7t(sevent_xlsx, "Screening ID", "QaultricsID") %>%
-   add_aux_id(con, .)
-
-sevent_xlsx_drop <- readxl::read_xlsx("sheets/7T.xlsx", sheet="Dropped")
-brn_mch7t_drop <-idcols_7t(sevent_xlsx_drop)
-add_id_to_db(con, brn_mch7t_drop)
-aux_id_7t(sevent_xlsx_drop, "Screening ID", "QaultricsID") %>%
-   add_aux_id(con, .)
-
-## get calendar info -- buggy, use `gcalcli`
-# devtools::install_github("jdeboer/gcalendar")
-#library(gcalendar)
-#creds <- GoogleApiCreds(appCreds = "secret.json")
-#calve <- gCalendar$new(creds=creds, id="lunalncd@gmail.com")$events
-
-calv <-
-   read.csv("txt/cal_events.csv") %>%
-   mutate(sdate=ymd_hms(sdate))
-cal <- calv %>%
-    filter(study=="7T", !grepl("cancelled", desc)) %>%
-    mutate(vtimestamp=format(sdate, "%Y-%m-%d"))
-# "study"      "visitno"    "vtype"      "initials"   "age"
-# "sdate"      "durhr"      "vscore"     "desc"       "vtimestamp"
-
-insert_study("BrainMechR01", "BrainMechR01")
-
-## visit 1 scan
 extract_7t_date <- function(d, agevar, vdatevar) {
    d<-as.data.frame(d)
    d$vtimestamp <- d[, vdatevar] # cannot get !!vdatevar to work?
@@ -101,34 +65,20 @@ match_7t_cal <- function(d, cal, vtype) {
         stop("too few visit <-> calendar vtimestamp/sdate matches! ",
              nmatch, " out of ", nrow(d))
 
-     return(m)
+     return(m %>% filter(!is.na(vtimestamp)))
 }
-insert_7t <- function(d) {
-  d %>%
+insert_7t <- function(d, con) {
+  d.good <-
+     d %>%
      filter(!is.na(id), !is.na(vtype)) %>%
-     add_visit
+     # hard code remove some duplicate calendar matches
+     filter(!(is.na(vscore) & id == "11746"),
+            !(vscore==2.5   & id == "11718"),
+            !(vscore==0     & id == "11670")  ) # 20180713: 9 and again at 14
+
+  add_visit(d.good, con)
 }
 
-extract_7t_date(sevent_xlsx, "Age @ Y1 Behav", "Y1 Behav Date") %>%
-     match_7t_cal(cal, "behav") %>%
-     insert_7t
-extract_7t_date(sevent_xlsx, "Age @ Y1 MRI", "Y1 MRI Date") %>%
-   match_7t_cal(cal, "scan") %>%
-   insert_7t
-
-## MR ID for 7T
-raw_links <- Sys.glob("/Volumes/Hera/Raw/BIDS/7TBrainMech/rawlinks/*/0001*") %>%
-    sapply(function(x) sprintf("find %s -type l -print -quit", x) %>%
-                       system(intern=T))
-mrids <- data.frame(
-   mrid =  raw_links %>%
-      sapply(function(x) sprintf("readlink %s", x) %>% system(intern=T)) %>%
-      str_extract("(?<=7TBrainMech/)[^/]*"),
-   ld8 = str_extract(raw_links, "(?<=rawlinks/)[^/]*"),
-   stringsAsFactors =F
-)
-
-#unames <- do.call(intersect, lapply(list(sevent_xlsx,sevent_xlsx_drop), names))
 get_ids <- function(d) {
    d %>%
    filter(grepl("\\d{5}", `Luna ID`)) %>%
@@ -140,9 +90,136 @@ get_ids <- function(d) {
    select(ld8, `Luna ID`, edate=vdate)
 }
 
-luna_7t_lookup <-
-   rbind(get_ids(sevent_xlsx_drop), get_ids(sevent_xlsx)) %>%
-   inner_join(mrids)
 
-aux_id_7t(luna_7t_lookup, "mrid", "7TMRID") %>%
-   add_aux_id(con, .)
+populate_7t <- function(con, sheet_filename="sheets/7T.xlsx") {
+  sevent_xlsx <- readxl::read_xlsx(sheet_filename, sheet="Enrolled")
+
+  print("7t: add ids")
+  #brn_mch_7t <-lapply(list(sevent_xlsx, sevenTxlsx_drop),  idcols_7t) %>% bind_rows
+  brn_mch_7t <-idcols_7t(sevent_xlsx)
+
+  add_id_to_db(con, brn_mch_7t, double_ok_list=c("11390", "11515"))
+
+  # add QualitricsID for those that have a lunaid
+
+  print("7t: add qualtircs ids")
+  aux_id_7t(sevent_xlsx, "Screening ID", "QaultricsID") %>%
+     add_aux_id(con, .)
+
+  print("7t: add dropped lunaids")
+  sevent_xlsx_drop <- readxl::read_xlsx(sheet_filename, sheet="Dropped")
+  brn_mch7t_drop <- idcols_7t(sevent_xlsx_drop)
+
+  add_id_to_db(con, brn_mch7t_drop)
+  aux_id_7t(sevent_xlsx_drop, "Screening ID", "QaultricsID") %>%
+     add_aux_id(con, .)
+
+  ## get calendar info -- buggy, use `gcalcli`
+  # devtools::install_github("jdeboer/gcalendar")
+  #library(gcalendar)
+  #creds <- GoogleApiCreds(appCreds = "secret.json")
+  #calve <- gCalendar$new(creds=creds, id="lunalncd@gmail.com")$events
+
+  print("7t: pasre calendar")
+  calv <-
+     read.csv("txt/cal_events.csv") %>%
+     mutate(sdate=ymd_hms(sdate))
+  cal <- calv %>%
+      filter(study=="7T", !grepl("cancelled", desc)) %>%
+      mutate(vtimestamp=format(sdate, "%Y-%m-%d"))
+  # "study"      "visitno"    "vtype"      "initials"   "age"
+  # "sdate"      "durhr"      "vscore"     "desc"       "vtimestamp"
+
+  print("7t: add study")
+  insert_study("BrainMechR01", "BrainMechR01")
+
+  ## visit 1 scan
+
+  print("7t: add behave visits")
+  extract_7t_date(sevent_xlsx, "Age @ Y1 Behav", "Y1 Behav Date") %>%
+       match_7t_cal(cal, "behav") %>%
+       insert_7t(con)
+  print("7t: add scan visits")
+  scans <- extract_7t_date(sevent_xlsx, "Age @ Y1 MRI", "Y1 MRI Date") %>%
+     match_7t_cal(cal, "scan")
+  insert_7t(scans, con)
+
+  ## MR ID for 7T
+  # 20190404 - rawlinks generated by
+  #  /Volumes/Hera/Projects/7TBrainMech/scripts/mri/001_dcm2bids.bash
+  #  which uses visits populated above to tie lunaid to 7TMRID
+  # -- needs to be run in two passes
+  print("read 7t symbolic links -- 2nd pass (first pass sets visits used by linker)")
+  raw_links <- Sys.glob("/Volumes/Hera/Raw/BIDS/7TBrainMech/rawlinks/*/000[12]*") %>%
+      sapply(function(x) sprintf("find %s -type l -print -quit", x) %>%
+                         system(intern=T))
+  mrids <- data.frame(
+     mrid =  raw_links %>%
+        sapply(function(x) sprintf("readlink %s", x) %>% system(intern=T)) %>%
+        str_extract("(?<=7TBrainMech/)[^/]*"),
+     ld8 = str_extract(raw_links, "(?<=rawlinks/)[^/]*"),
+     stringsAsFactors =F
+  )
+
+  #unames <- do.call(intersect, lapply(list(sevent_xlsx,sevent_xlsx_drop), names))
+
+  luna_7t_lookup <-
+     rbind(get_ids(sevent_xlsx_drop), get_ids(sevent_xlsx)) %>%
+     inner_join(mrids)
+
+  print("add 7t aux ids")
+  aux_id_7t(luna_7t_lookup, "mrid", "7TMRID") %>%
+     add_aux_id(con, .)
+
+  # now that we have added everyone, get their pid into memory
+  pid_person <-
+     tbl(con, "person") %>%
+     select(pid, fname, lname) %>% collect
+
+
+  ## Contacts
+  print("Contact")
+  require(tidyr)
+  # get contact info (Phone and Email) from the enroll and drop sheets
+  contacts <-
+     lapply(list(sevent_xlsx, sevent_xlsx_drop),
+            function(x) x %>%
+              select(fname=`First Name`, lname=`Last Name`, Phone, Email) %>%
+              filter(!is.na(lname))) %>% bind_rows
+
+  added_contacts <- add_new_contacts(con, contacts, pid_person)
+
+  print("Notes")
+  notes <-
+     sevent_xlsx %>%
+     select(fname=`First Name`, lname=`Last Name`, note=Notes) %>%
+     filter(!is.na(note), note != "") %>%
+     inner_join(pid_person) %>% select(pid, note)
+  added_notes <- add_new_only(con, "note", notes)
+
+  print("Drop Notes")
+  # add notes (that are reall "Reason Dropped"
+  drop_notes <-
+     sevent_xlsx_drop %>%
+     select(fname=`First Name`, lname=`Last Name`, note=`Reason Dropped`) %>%
+     filter(!is.na(note), note != "") %>%
+     inner_join(pid_person) %>% select(pid, note)
+
+  # add and get back, now with nid
+  nid_drop_notes <- add_new_only(con, "note", drop_notes)
+
+  # add to drop, and get back did
+  # TODO: get better dropcode
+  did <- nid_drop_notes %>%
+     select(pid) %>%
+     mutate(dropcode="OLDDBDSUBJ") %>%
+     add_new_only(con, "dropped", .)
+
+  # add to join table
+ did_nid <-
+    inner_join(did, nid_drop_notes) %>%
+    select(did, nid) %>%
+    add_new_only(con, "drop_note", .)
+
+  print("finished 7t")
+}

@@ -1,4 +1,4 @@
-source("db_insert.R")
+#source("db_insert.R")
 populate_p5<- function(con, sheet_filename="sheets/P5.xlsx") {
 
    insert_study("P5", "P5")
@@ -33,7 +33,9 @@ populate_p5<- function(con, sheet_filename="sheets/P5.xlsx") {
              initials,
              cohort=Cohort) %>%
       mutate(id=as.character(id),
-             vtimestamp=format(lubridate::ymd_hms(sdate.sheet), "%Y-%m-%d")) %>%
+             vtimestamp=format(lubridate::ymd_hms(sdate.sheet), "%Y-%m-%d"),
+             study="P5"
+             ) %>%
       merge(cal,
             by=c("initials", "vtimestamp", "sex"),
             all.x=T,

@@ -1,7 +1,15 @@
-source("db_insert.R")
+# source("db_insert.R")
 
 extract_pet_date <- function(d, agevar, vdatevar) {
    d<-as.data.frame(d)
+   missing_names <- setdiff(c(vdatevar, agevar), names(d))
+   if (length(missing_names)>0L)
+      stop("missing ",
+           paste(collapse=", ", missing_names),
+           " in dataframe;",
+           "have: ",
+           paste(collapse=", ", paste0("'", names(d), "'")))
+
    d$vtimestamp <- d[, vdatevar] # cannot get !!vdatevar to work?
    d$age <- d[, agevar] # cannot get !!vdatevar to work?
    d %>%
@@ -11,7 +19,7 @@ extract_pet_date <- function(d, agevar, vdatevar) {
               age,
               vtimestamp,
               initials,
-              cohort=`K/A`)
+              cohort=`Cohort`)
 }
 
 match_pet_cal <- function(d, cal, vtype) {
@@ -47,14 +55,14 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
 
    insert_study("PET", "mMR PET")
 
-   sheet <- readxl::read_xlsx(sheet_filename, sheet="Completed") %>%
+   sheet <- readxl::read_xlsx(sheet_filename, sheet="MASTER INFO") %>%
       filter(!is.na(`Luna ID`))
    # get pet ids
    pet <-
       sheet %>%
       select(id=`Luna ID`, dob=`DOB`,
             fname=`First Name`, lname=`Last Name`,
-            adddate=`x1 Beh Date`, sex=`Sex`,
+            adddate=`x1 Behavioral`, sex=`Sex`,
             source=`Recruitment Source`) %>%
       filter(!is.na(fname)) %>%
       mutate(id=as.character(id),
@@ -73,16 +81,69 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
    ## TIME POINT ONE
    cat("pet scan tp1\n")
    t1_scan <-
-      extract_pet_date(sheet, "Age @ x1 Scan", "x1 Scan Date") %>%
+      extract_pet_date(sheet, "x1 Scan Age", "x1 Scan") %>%
       match_pet_cal( cal, "scan") %>%
       mutate(visitno=1)
    add_visit(t1_scan, con)
 
    cat("pet scan tp2\n")
+   #sheet <- readxl::read_xlsx(sheet_filename, sheet="x2 Scheduling") %>%
+   #   filter(!is.na(`Luna ID`))
    t2_scan <-
-      extract_pet_date(sheet, "Age @ x2 Scan", "x2 Scan Date") %>%
+      extract_pet_date(sheet, "x2 Scan Age", "x2 Scan") %>%
       match_pet_cal(cal, "scan")%>%
       mutate(visitno=2)
-   add_visit(t1_scan, con)
+   add_visit(t2_scan, con)
+
+   t3_scan <-
+      extract_pet_date(sheet, "x3 Scan Age", "x3 Scan") %>%
+      match_pet_cal(cal, "scan")%>%
+      mutate(visitno=3)
+   add_visit(t3_scan, con)
+
+   ### CONTACT and NOTES
+   # now that we have added everyone, get their pid into memory
+   pid_person <-
+      tbl(con, "person") %>%
+      select(pid, fname, lname) %>% collect
+   ## Contacts
+   print("PET Contacts")
+
+   # pull from email and phone from "MASTER INFO" and add to db
+   added_contacts <-
+      sheet %>%
+      select(fname=`First Name`, lname=`Last Name`, Phone, Email) %>%
+      add_new_contacts(con, ., pid_person)
+
+   ## Notes
+   print("Notes")
+   added_notes <-
+      sheet %>%
+      filter(!grepl("Dropped", Type, ignore.case=T)) %>%
+      select(fname=`First Name`, lname=`Last Name`, note=Notes) %>%
+      filter(!is.na(note), note != "") %>%
+      inner_join(pid_person) %>% select(pid, note) %>%
+      add_new_only(con, "note", .)
+   ## Drop notes (TODO: assumes all drops will have notes)
+   added_drop_notes <-
+      sheet %>%
+      filter(grepl("Dropped", Type, ignore.case=T)) %>%
+      select(fname=`First Name`, lname=`Last Name`, note=Notes) %>%
+      filter(!is.na(note), note != "") %>%
+      inner_join(pid_person) %>% select(pid, note) %>%
+      add_new_only(con, "note", .)
+
+  did <-  added_drop_notes  %>%
+     select(pid) %>%
+     mutate(dropcode="OLDDBDSUBJ") %>%
+     add_new_only(con, "dropped", .)
+
+  # add to join table
+  did_nid <-
+     inner_join(did, added_drop_notes) %>%
+     select(did, nid) %>%
+     add_new_only(con, "drop_note", .)
 
 }
+
+## TODO: behavioral, 

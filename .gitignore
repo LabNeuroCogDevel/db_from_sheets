@@ -2,3 +2,6 @@ google_cred_pullpython.json
 ~/.google_apis_auth.RDS
 secret.json
 sheets_pass.list
+sheets/
+__pycache__/
+

@@ -7,15 +7,19 @@ suppressPackageStartupMessages({
  library(dbplyr)
  library(lubridate)
  library(stringr)
+ library(tidyr)
 })
 
 # depends on valid ~/.pgpass
-db_host <- "arnold.wpic.upmc.edu"
-db_host <- "localhost"
-con <- DBI::dbConnect(RPostgreSQL::PostgreSQL(),
+
+get_con <- function() {
+   db_host <- "arnold.wpic.upmc.edu"
+   #db_host <- "localhost"
+   DBI::dbConnect(RPostgreSQL::PostgreSQL(),
                       host=db_host,
                       user="postgres",
                       dbname="lncddb")
+}
 
 read_gcal <- function(txt_file="txt/cal_events.csv") {
   calv <-
@@ -46,9 +50,10 @@ mk_initials <- function(fname, lname) {
       toupper
 }
 cal_vtype_fix <- function(vtype) {
+   vtype <- as.character(vtype)
    vtype <- ifelse(vtype=="scan", "Scan", vtype)
    vtype <- ifelse(vtype=="behav", "Behavioral", vtype)
-   return(vtype)
+   return(as.character(vtype))
 }
 
 # if any cell in date column is not a date (e.g. "1/9 or 1/10")
@@ -121,15 +126,20 @@ add_aux_id <- function(con, d) {
 
    if (nrow(to_add)>0L) {
       db_insert_into(con, "enroll", to_add) %>%
-         return()
+      return()
    } else {
       warning("no ids to add!")
       return(F)
    }
 }
 
-# insert person, get pid, insert int oenroll
+# insert person, get pid, insert intoenroll
 add_id_to_db <- function(con, d,  double_ok_list=NULL) {
+
+   all_enroll <-
+      tbl(con, "enroll") %>%
+      inner_join(tbl(con, "person"), by="pid") %>%
+      collect
 
    # shouldn't match any pid
    person_mashed <- with(d, paste(fname, lname, dob))
@@ -139,9 +149,9 @@ add_id_to_db <- function(con, d,  double_ok_list=NULL) {
       collect
 
    have_lunaid <-
-      tbl(con, "enroll") %>%
-      filter(etype %like% "LunaID", id %in% d$id) %>%
-      collect
+      all_enroll %>%
+      filter(grepl("LunaID", etype),
+             id %in% d$id)
 
    # anyone in db without a lunaid?
    missing_id <-
@@ -154,8 +164,7 @@ add_id_to_db <- function(con, d,  double_ok_list=NULL) {
       cat("in sheet:\n")
       print(missing_id)
       cat("in db\n")
-      tbl(con, "enroll") %>%
-         inner_join(tbl(con, "person"), by="pid") %>%
+      all_enroll %>%
          filter(pid %in% missing_id$pid ) %>%
          select(fname, lname, dob, pid, id, adddate, sex, hand) %>%
          collect %>% as.data.frame %>%
@@ -168,9 +177,16 @@ add_id_to_db <- function(con, d,  double_ok_list=NULL) {
       anti_join(have_lunaid, by="id") %>%
       anti_join(have_pid, by=c("fname", "lname"))
    # add people not in database (as either a person or lunaid)
-   people_to_add %>%
-      select(-id) %>%
-      db_insert_into(con, "person", .)
+   tryCatch({
+      people_to_add %>%
+         select(-id) %>%
+         db_insert_into(con, "person", .)
+   }, error=function(e){
+      cat("Error adding people using db_insert.R:add_id_to_db\n")
+      cat("20190620: issue with keys see ../mdb_psql_R/sql/06_update_seq.sql\n")
+      cat("select setval('person_pid_seq', (select max(pid) from person));")
+      stop(e)
+   })
 
    to_enroll <-
       missing_id %>%
@@ -235,28 +251,31 @@ get_vstudy <- function(vids_with_study){
        collect %>%
        merge(vids_with_study, by=c("vid", "study"))
 }
+
 missing_warn <- function(toadd, db, msg, column="id") {
     mis <- setdiff(unlist(toadd[, column]), db[, column])
     if (length(mis)>0L)
         warning("missing ", column, " in ", msg,
-                " db: ", paste(sep=",", mis), "\n")
+                " db: ", paste(collapse=", ", mis), "\n")
 }
 
-add_visit <- function(d, con=con) {
+add_visit <- function(d, con) {
     # input
-    # df(lunaid,vtype,vscore,vtimestamp,vistno,ra,study,cohort)
     req_cols <- c("id", "vtype", "vscore", "vtimestamp",
                   "visitno", "ra", "study", "age", "study",
                   "cohort")
     if (!all(req_cols %in% names(d)))
-        stop("add_visit not given dataframe with required columns. Missing: ",
-             paste(collapse=", ", setdiff(req_cols, names(d))))
+             paste(collapse=", ", setdiff(req_cols, names(d)))
 
     # subset to just what we care about
     d <- d[, names(d) %in% req_cols]
 
     # format for db
     d$vtimestamp <- format(d$vtimestamp, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+    badidx <- is.na(d$vtimestamp)
+    if (any(badidx)) warning("removing ", length(which(badidx)),
+                             " nan visits of ", nrow(d))
+    d <- d[!badidx, ]
     if (!"vstatus" %in% names(d)) d$vstatus <- "checkedin"
 
     # get pid
@@ -270,9 +289,27 @@ add_visit <- function(d, con=con) {
 
     ## find vid or create vid
     vids_df <- get_vids(pid_df)
-    to_add <- anti_join(pid_df, vids_df, by="pid")
+    to_add <- anti_join(pid_df, vids_df, by="pid") %>% unique
+
     # add visit
     if (nrow(to_add)>0L){
+
+       badidx <- is.na(to_add$age)
+       if (any(badidx)) warning(length(which(badidx)), " no age visits of ",
+                                nrow(to_add), " to_add. removing")
+       to_add <- to_add[!badidx, ]
+
+        dups <- to_add %>%
+           select(pid, vtype, vtimestamp) %>%
+           duplicated
+        if (length(which(dups))>0L) {
+           print("Dups in in visit: ")
+           to_add[dups, ] %>%
+              inner_join(to_add, by=c("pid", "vtype", "vtimestamp")) %>%
+              print.data.frame
+           stop("have dups in visit insert")
+        }
+
         to_add %>%
             select(pid, vtype, vscore, vtimestamp, visitno, vstatus, age) %>%
             db_insert_into(con, "visit", .)
@@ -300,9 +337,52 @@ add_visit <- function(d, con=con) {
             paste(collapse=",", setdiff(vids_df$id, vids_with_study$id)))
 
     already_have_study <- get_vstudy(vids_with_study)
-    to_add_study <- anti_join(vids_with_study, already_have_study,  by="vid")
 
-    to_add_study %>%
-     select(vid, study, cohort) %>%
-     db_insert_into(con, "visit_study", .)
+    to_add_study <- anti_join(vids_with_study, already_have_study,  by="vid")
+    if (nrow(to_add_study)>0L) {
+        print("already have")
+        print.data.frame(vids_with_study %>% head )
+        print.data.frame(already_have_study %>% head )
+        print("will add")
+        print.data.frame(to_add_study %>% head)
+       to_add_study %>%
+        select(vid, study, cohort) %>%
+        db_insert_into(con, "visit_study", .)
+    }
+}
+
+# only add to table what is not already there
+# anti join based on idcols
+add_new_only <- function(con, tname, d, idcols=names(d), add=T) {
+   have_data <- tbl(con,tname) %>% select_(.dots=idcols) %>% collect
+   need_data <- anti_join(d, have_data)
+   if (nrow(need_data)>0L & add==T){
+      cat("adding", nrow(need_data), tname, "\n")
+      db_insert_into(con, tname, need_data)
+      # give back data as it was entered in db (probalby with id column)
+      need_data <- inner_join(tbl(con, tname) %>% collect, need_data)
+   }
+   return(need_data)
+}
+
+## add contacts (expect fname, lname, and contact type columns)
+add_new_contacts <- function(con, contacts, pid_person) {
+   if (!all(c("lname", "fname") %in% names(contacts))){
+      stop("bad inptut to add_new_contacts. need fname and lname. have ",
+           names(contacts))
+   }
+   # find pid
+   contacts_pid <- inner_join(contacts, pid_person)
+   # who dont we have?
+   print("no pid for contacted persons:")
+   anti_join(contacts, contacts_pid) %>%
+      mutate(name=paste(fname, lname)) %>% select(name) %>%
+      print.data.frame(row.names=F)
+   c_as_db <-
+      contacts_pid %>% unite("who", c("fname", "lname"), sep=" ") %>%
+      gather(ctype, cvalue, -pid, -who) %>%
+      mutate(relation="Subject")
+   # make sure we aren't double adding
+   added_contacts <- add_new_only(con, "contact", c_as_db,
+                                  c("pid", "who", "cvalue"))
 }
