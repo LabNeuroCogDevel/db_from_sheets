@@ -78,6 +78,27 @@ xlsx_date <- function(x, msg=NULL) {
    x <- format(x, "%Y-%m-%d")
 }
 
+
+# only add to table what is not already there
+# anti join based on idcols
+add_new_only <- function(con, tname, d, idcols=names(d), add=T) {
+   d_unique <- unique(d)
+   ndup <- nrow(d) - nrow(d_unique)
+   if (ndup > 0L ) {
+      warning(tname, " input to add not unique. removing ", ndup, " dups")
+      d <- d_unique
+   }
+   have_data <- tbl(con, tname) %>% select_(.dots=idcols) %>% collect
+   need_data <- anti_join(d, have_data)
+   if (nrow(need_data)>0L & add==T){
+      cat("adding", nrow(need_data), "rows to", tname, "\n")
+      db_insert_into(con, tname, need_data)
+      # give back data as it was entered in db (probalby with id column)
+      need_data <- inner_join(tbl(con, tname) %>% collect, need_data)
+   }
+   return(need_data)
+}
+
 # okay if this fails -- only need to have inserted once
 #will fail if tried again
 insert_study <- function(study, grant) {
@@ -340,29 +361,24 @@ add_visit <- function(d, con) {
 
     to_add_study <- anti_join(vids_with_study, already_have_study,  by="vid")
     if (nrow(to_add_study)>0L) {
-        print("already have")
-        print.data.frame(vids_with_study %>% head )
-        print.data.frame(already_have_study %>% head )
-        print("will add")
-        print.data.frame(to_add_study %>% head)
+       # some info
+       cat("already have", nrow(vids_with_study), "vids with study\n")
+       cat("and ", nrow(already_have_study), "already_have_study\n")
+       cat("will add ", nrow(to_add_study), "visit_study. like:\n")
        to_add_study %>%
-        select(vid, study, cohort) %>%
-        db_insert_into(con, "visit_study", .)
-    }
-}
+          select(vid, study, cohort) %>%
+          head %>%
+          print.data.frame(row.names=F)
 
-# only add to table what is not already there
-# anti join based on idcols
-add_new_only <- function(con, tname, d, idcols=names(d), add=T) {
-   have_data <- tbl(con,tname) %>% select_(.dots=idcols) %>% collect
-   need_data <- anti_join(d, have_data)
-   if (nrow(need_data)>0L & add==T){
-      cat("adding", nrow(need_data), tname, "\n")
-      db_insert_into(con, tname, need_data)
-      # give back data as it was entered in db (probalby with id column)
-      need_data <- inner_join(tbl(con, tname) %>% collect, need_data)
-   }
-   return(need_data)
+       # add what we can
+       added <-
+          to_add_study %>%
+          select(vid, study, cohort) %>%
+          add_new_only(con, "visit_study", .)
+
+       #if we were confident we weren't adding things already there:
+       # db_insert_into(con, "visit_study", .)
+    }
 }
 
 ## add contacts (expect fname, lname, and contact type columns)
@@ -379,8 +395,10 @@ add_new_contacts <- function(con, contacts, pid_person) {
       mutate(name=paste(fname, lname)) %>% select(name) %>%
       print.data.frame(row.names=F)
    c_as_db <-
-      contacts_pid %>% unite("who", c("fname", "lname"), sep=" ") %>%
+      contacts_pid %>%
+      unite("who", c("fname", "lname"), sep=" ") %>%
       gather(ctype, cvalue, -pid, -who) %>%
+      filter(!is.na(cvalue), cvalue!="") %>%
       mutate(relation="Subject")
    # make sure we aren't double adding
    added_contacts <- add_new_only(con, "contact", c_as_db,

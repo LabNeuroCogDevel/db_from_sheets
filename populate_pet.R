@@ -95,11 +95,35 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
       mutate(visitno=2)
    add_visit(t2_scan, con)
 
+   cat("pet scan tp2\n")
    t3_scan <-
       extract_pet_date(sheet, "x3 Scan Age", "x3 Scan") %>%
       match_pet_cal(cal, "scan")%>%
       mutate(visitno=3)
    add_visit(t3_scan, con)
+
+   ## Behavioral
+   print("Behavioral visits")
+   t1_beh <-
+      extract_pet_date(sheet, "x1 Beh Age", "x1 Behavioral") %>%
+      match_pet_cal(cal, "behav") %>%
+      mutate(visitno=1) %>%
+      add_visit(con)
+
+   print("x2")
+   t2_beh <-
+      extract_pet_date(sheet, "x2 Beh Age", "x2 Behavioral") %>%
+      match_pet_cal(cal, "behav") %>%
+      mutate(visitno=2) %>%
+      add_visit(con)
+
+   print("x3")
+   t3_beh <-
+      extract_pet_date(sheet, "x3 Beh Age", "x3 Behavioral") %>%
+      match_pet_cal(cal, "behav") %>%
+      mutate(visitno=3) %>%
+      add_visit(con)
+
 
    ### CONTACT and NOTES
    # now that we have added everyone, get their pid into memory
@@ -124,6 +148,7 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
       filter(!is.na(note), note != "") %>%
       inner_join(pid_person) %>% select(pid, note) %>%
       add_new_only(con, "note", .)
+
    ## Drop notes (TODO: assumes all drops will have notes)
    added_drop_notes <-
       sheet %>%
@@ -143,7 +168,5 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
      inner_join(did, added_drop_notes) %>%
      select(did, nid) %>%
      add_new_only(con, "drop_note", .)
-
 }
 
-## TODO: behavioral, 
