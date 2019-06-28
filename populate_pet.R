@@ -164,9 +164,9 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
      add_new_only(con, "dropped", .)
 
   # add to join table
-  did_nid <-
-     inner_join(did, added_drop_notes) %>%
-     select(did, nid) %>%
-     add_new_only(con, "drop_note", .)
+  if (nrow(added_drop_notes) > 0L)
+     did_nid <-
+        inner_join(did, added_drop_notes) %>%
+        select(did, nid) %>%
+        add_new_only(con, "drop_note", .)
 }
-

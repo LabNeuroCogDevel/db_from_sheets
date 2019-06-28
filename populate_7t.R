@@ -126,7 +126,8 @@ populate_7t <- function(con, sheet_filename="sheets/7T.xlsx") {
      mutate(sdate=ymd_hms(sdate))
   cal <- calv %>%
       filter(study=="7T", !grepl("cancelled", desc)) %>%
-      mutate(vtimestamp=format(sdate, "%Y-%m-%d"))
+      mutate(vtimestamp=format(sdate, "%Y-%m-%d")) %>%
+      rename(googleuri=eid)
   # "study"      "visitno"    "vtype"      "initials"   "age"
   # "sdate"      "durhr"      "vscore"     "desc"       "vtimestamp"
 

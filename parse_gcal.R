@@ -18,7 +18,7 @@ cat("have ", nrow(allcal), "rows going into R")
 # "7T",1,"scan","AI",19,2018-02-16 13:00:00,3.5,4.5,"7T x1 Scan - 19 yof (AI) - JF - 4.5"
 calv <-
    allcal %>%
-    `names<-`(c("sdate", "stime", "edate", "etime", "desc")) %>%
+    `names<-`(c("sdate", "stime", "edate", "etime", "eid", "desc")) %>%
     mutate(sdate=ymd_hm(paste(sdate, stime)),
            edate=ymd_hm(paste(edate, etime)),
            durhr=as.numeric(edate-sdate)/60,
@@ -32,7 +32,7 @@ calv <-
            visitno=str_extract(desc, "(?<= x)\\d+(?= )") %>% as.numeric
            ) %>%
     select(study, visitno, vtype, initials,
-           age, sex, sdate, durhr, vscore, desc)
+           age, sex, sdate, durhr, vscore, eid, desc)
 
 
 cat(" and ", nrow(calv), "going out\n")

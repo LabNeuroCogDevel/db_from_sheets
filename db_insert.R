@@ -27,7 +27,8 @@ read_gcal <- function(txt_file="txt/cal_events.csv") {
      mutate(sdate=ymd_hms(sdate)) %>%
       filter(!grepl("cancelled", desc)) %>%
       mutate(vtimestamp=format(sdate, "%Y-%m-%d"),
-             sex=sex%>%toupper)
+             sex=sex%>%toupper,
+             googleuri=eid)
 }
 
 get_cal_ra <- function(desc, RAs=c("KS", "JF", "JL", "JG", "MM", "LT")) {
@@ -262,7 +263,7 @@ get_vids <- function(pid_df) {
        tbl(con, "visit") %>%
        filter(paste(pid, vtype, vtimestamp) %in% visit_mash) %>%
        collect %>%
-       merge(pid_df %>% select(pid,id),by="pid")
+       merge(pid_df %>% select(pid, id), by="pid")
 }
 get_vstudy <- function(vids_with_study){
     mash <- with(vids_with_study, paste(vid, study))
@@ -284,7 +285,7 @@ add_visit <- function(d, con) {
     # input
     req_cols <- c("id", "vtype", "vscore", "vtimestamp",
                   "visitno", "ra", "study", "age", "study",
-                  "cohort")
+                  "cohort", "googleuri")
     if (!all(req_cols %in% names(d)))
              paste(collapse=", ", setdiff(req_cols, names(d)))
 
@@ -297,7 +298,7 @@ add_visit <- function(d, con) {
     if (any(badidx)) warning("removing ", length(which(badidx)),
                              " nan visits of ", nrow(d))
     d <- d[!badidx, ]
-    if (!"vstatus" %in% names(d)) d$vstatus <- "checkedin"
+    if (!"vstatus" %in% names(d)) d$vstatus <- "complete"
 
     # get pid
     pid_df <- tbl(con, "enroll") %>%
@@ -332,13 +333,14 @@ add_visit <- function(d, con) {
         }
 
         to_add %>%
-            select(pid, vtype, vscore, vtimestamp, visitno, vstatus, age) %>%
+            select(pid, vtype, vscore, vtimestamp, visitno, vstatus, age, googleuri) %>%
             db_insert_into(con, "visit", .)
         # refetch all vids
         vids_df <- get_vids(pid_df)
     }
     missing_warn(pid_df, vids_df, "visit")
 
+    # ## JOIN TABLES ###
     # add visit_action
     #  vid,action=='checkedin' (vs sched), ra
     # add visit_study
@@ -347,7 +349,7 @@ add_visit <- function(d, con) {
     # add study and cohort back to vids_df
     db_tz <- tz(vids_df$vtimestamp[0]) # assume same timezone everywhere
     vids_with_study <-
-       d %>% select(id, vtimestamp, study, cohort) %>%
+       d %>% select(id, vtimestamp, study, cohort, ra) %>%
        mutate(vtimestamp=ymd_hms(vtimestamp, tz=db_tz)) %>%
        merge(vids_df, by=c("id", "vtimestamp"))
 
@@ -379,6 +381,12 @@ add_visit <- function(d, con) {
        #if we were confident we weren't adding things already there:
        # db_insert_into(con, "visit_study", .)
     }
+
+   # add visit_action -- 'complete' if date is old, 'sched' otherwise
+   vids_with_study %>%
+      mutate(action=ifelse(vtimestamp < today(), "complete", "sced")) %>%
+      select(vid, action, ra) %>%
+      add_new_only(con, "visit_action", .)
 }
 
 ## add contacts (expect fname, lname, and contact type columns)
