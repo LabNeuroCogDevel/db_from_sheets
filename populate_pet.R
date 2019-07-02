@@ -95,7 +95,7 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
       mutate(visitno=2)
    add_visit(t2_scan, con)
 
-   cat("pet scan tp2\n")
+   cat("pet scan tp3\n")
    t3_scan <-
       extract_pet_date(sheet, "x3 Scan Age", "x3 Scan") %>%
       match_pet_cal(cal, "scan")%>%
@@ -156,17 +156,7 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
       select(fname=`First Name`, lname=`Last Name`, note=Notes) %>%
       filter(!is.na(note), note != "") %>%
       inner_join(pid_person) %>% select(pid, note) %>%
+      mutate(dropcode="OLDDBDSUBJ") %>%
       add_new_only(con, "note", .)
 
-  did <-  added_drop_notes  %>%
-     select(pid) %>%
-     mutate(dropcode="OLDDBDSUBJ") %>%
-     add_new_only(con, "dropped", .)
-
-  # add to join table
-  if (nrow(added_drop_notes) > 0L)
-     did_nid <-
-        inner_join(did, added_drop_notes) %>%
-        select(did, nid) %>%
-        add_new_only(con, "drop_note", .)
 }

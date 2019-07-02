@@ -91,8 +91,8 @@ get_ids <- function(d) {
 }
 
 
-populate_7t <- function(con, sheet_filename="sheets/7T.xlsx") {
-  sevent_xlsx <- readxl::read_xlsx(sheet_filename, sheet="Enrolled")
+populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
+  sevent_xlsx <- readxl::read_xlsx(sheet_filename_7t, sheet="Enrolled")
 
   print("7t: add ids")
   #brn_mch_7t <-lapply(list(sevent_xlsx, sevenTxlsx_drop),  idcols_7t) %>% bind_rows
@@ -107,7 +107,7 @@ populate_7t <- function(con, sheet_filename="sheets/7T.xlsx") {
      add_aux_id(con, .)
 
   print("7t: add dropped lunaids")
-  sevent_xlsx_drop <- readxl::read_xlsx(sheet_filename, sheet="Dropped")
+  sevent_xlsx_drop <- readxl::read_xlsx(sheet_filename_7t, sheet="Dropped")
   brn_mch7t_drop <- idcols_7t(sevent_xlsx_drop)
 
   add_id_to_db(con, brn_mch7t_drop)
@@ -196,31 +196,28 @@ populate_7t <- function(con, sheet_filename="sheets/7T.xlsx") {
      select(fname=`First Name`, lname=`Last Name`, note=Notes) %>%
      filter(!is.na(note), note != "") %>%
      inner_join(pid_person) %>% select(pid, note)
-  added_notes <- add_new_only(con, "note", notes)
+  added_notes <- add_new_only(con, "note", notes, c("pid", "note"))
 
   print("Drop Notes")
   # add notes (that are reall "Reason Dropped"
   drop_notes <-
      sevent_xlsx_drop %>%
-     select(fname=`First Name`, lname=`Last Name`, note=`Reason Dropped`) %>%
+     select(fname=`First Name`, lname=`Last Name`, note=`Reason Dropped Details`,
+            dropcode=`Reason Dropped`) %>%
      filter(!is.na(note), note != "") %>%
-     inner_join(pid_person) %>% select(pid, note)
-
-  # add and get back, now with nid
-  nid_drop_notes <- add_new_only(con, "note", drop_notes)
-
-  # add to drop, and get back did
-  # TODO: get better dropcode
-  did <- nid_drop_notes %>%
-     select(pid) %>%
-     mutate(dropcode="OLDDBDSUBJ") %>%
-     add_new_only(con, "dropped", .)
-
-  # add to join table
- did_nid <-
-    inner_join(did, nid_drop_notes) %>%
-    select(did, nid) %>%
-    add_new_only(con, "drop_note", .)
+     mutate(dropcode = dropcode %>%
+            gsub("Low IQ", "LOWIQ", .) %>%
+            gsub("Uncomfortable in MRI", "MRI_UNCOMFY", .) %>%
+            gsub("Clinical.*|Psychiatric.*", "PSYCH_CLINICAL", .) %>%
+            gsub("No longer interested", "NOINTEREST", .) %>%
+            gsub("Motion, inattention", "BADSUBJ", .) %>%
+            gsub("Motion", "MOVER", .) %>%
+            gsub("Claustrophobic", "CLAUSTROPHOBIC", .) %>%
+            gsub("Non-removable metal", "METAL", .) %>%
+            gsub("Inattention", "INATTENTIVE", .) %>%
+            gsub("No contacts for MRI", "NO_ADULT", .)) %>%
+     inner_join(pid_person) %>% select(pid, note, dropcode)
+  added_drop_notes <- add_new_only(con, "note", drop_notes)
 
   print("finished 7t")
 }

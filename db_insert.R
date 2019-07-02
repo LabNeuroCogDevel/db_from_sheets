@@ -13,8 +13,8 @@ suppressPackageStartupMessages({
 # depends on valid ~/.pgpass
 
 get_con <- function() {
-   db_host <- "arnold.wpic.upmc.edu"
-   #db_host <- "localhost"
+   # db_host <- "arnold.wpic.upmc.edu"
+   db_host <- "localhost"
    DBI::dbConnect(RPostgreSQL::PostgreSQL(),
                       host=db_host,
                       user="postgres",
