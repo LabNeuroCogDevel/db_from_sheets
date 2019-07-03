@@ -125,7 +125,7 @@ populate_pet<- function(con, pet_sheet_filename="sheets/PET.xlsx") {
       add_visit(con)
 
    ## 20190703: Year 3 on own sheet more uptodate
-
+   print("redo v3 from schedule sheet")
    sched3 <- readxl::read_xlsx(pet_sheet_filename, sheet="x3 Scheduling") %>%
       filter(!is.na(`Luna ID`)) %>%
       mutate(dob = ymd(xlsx_date(as.character(DOB), minyear=1970)),
@@ -135,26 +135,28 @@ populate_pet<- function(con, pet_sheet_filename="sheets/PET.xlsx") {
       )
 
    # scan
+   print("x3sched scan")
    t3s_sched <- sched3 %>%
       extract_pet_date("x3scanage", "x3 Scan") %>%
       filter(!is.na(vtimestamp))
    # add
    t3s_to_add <-
       match_pet_cal(t3s_sched, cal, "scan") %>%
-      mutate(visit=3)
+      mutate(visitno=3)
    # actually add
-   add_visit(con, t3s_to_add)
+   add_visit(t3s_to_add, con)
 
    # behave
+   print("x3behav scan")
    t3b_sched <- sched3 %>%
       extract_pet_date("x3behage", "x3 Behvaioral") %>%
       filter(!is.na(vtimestamp))
    # add
    t3b_to_add <-
-      match_pet_cal(t3s_sched, cal, "behav") %>%
-      mutate(visit=3)
+      match_pet_cal(t3b_sched, cal, "behav") %>%
+      mutate(visitno=3)
    # actually add
-   add_visit(con, t3b_to_add)
+   add_visit(t3b_to_add, con)
 
    ## whats missing
    nocal <- rbind(
