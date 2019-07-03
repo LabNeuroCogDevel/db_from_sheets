@@ -3,13 +3,12 @@
 # 20190702WF - init
 #   test db add does what we expect
 
-
-library(testthat)
-library(lubridate)
 # run testthat if run like ./test_dbadd.R
 # alternative: Rscript -e 'testthat::test_dir(".")'
 if (sys.nframe() == 0) testthat::test_dir(".")
 
+library(testthat)
+library(lubridate)
 source("db_insert.R")
 
 con <- get_con()
@@ -77,17 +76,31 @@ test_that("have cal eid", {
 
    expect_gte(cal$n[cal$study == "PET"], 548)
    expect_gte(cal$n[cal$study == "P5"], 57)
-   expect_gte(cal$n[cal$study == "BrainMechR01"], 244)
+   expect_gte(cal$n[cal$study == "BrainMechR01"], 243)
 
    # earliest date
-   expect_true(cal$oldest[cal$study == "BrainMechR01"]  < ymd("20180125"))
-   expect_true(cal$oldest[cal$study == "P5"]  < ymd("20160216"))
-   expect_true(cal$oldest[cal$study == "PET"] < ymd("20180124"))
+   b7t_oldest <- cal$oldest[cal$study == "BrainMechR01"]
+   expect_true(b7t_oldest  < ymd("20180125"))
 
-   # most recent date -- test will be out of date
-   expect_true(cal$newest[cal$study == "BrainMechR01"]  >= ymd("20190702"))
-   expect_true(cal$newest[cal$study == "P5"]  >= ymd("20171229"))
+   p5_oldest <- cal$oldest[cal$study == "P5"]
+   expect_true(p5_oldest < ymd("20160216"))
+
+   pet_oldest <- cal$oldest[cal$study == "PET"]
+   expect_true(pet_oldest <  ymd("20180124"))
+
+   ##
+   ## # most recent date
+   ## # test will be out of date
+   ##
+
    # why is pet so far behind?
-   # TODO: fix PET dates
-   expect_true(cal$newest[cal$study == "PET"]  >= ymd("20190320"))
+   pet_newest <- cal$newest[cal$study == "PET"]
+   expect_true(pet_newest > ymd("20190628"))
+
+   b7t_newest <-cal$newest[cal$study == "BrainMechR01"]
+   expect_true(b7t_newest >= ymd("20190628"))
+
+   p5_newest <- cal$newest[cal$study == "P5"]
+   expect_true(p5_newest >= ymd("20171229"))
+
 })
