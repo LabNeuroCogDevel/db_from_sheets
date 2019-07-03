@@ -51,11 +51,11 @@ match_pet_cal <- function(d, cal, vtype) {
 
 
 # do it all
-populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
+populate_pet<- function(con, pet_sheet_filename="sheets/PET.xlsx") {
 
    insert_study("PET", "mMR PET")
 
-   sheet <- readxl::read_xlsx(sheet_filename, sheet="MASTER INFO") %>%
+   sheet <- readxl::read_xlsx(pet_sheet_filename, sheet="MASTER INFO") %>%
       filter(!is.na(`Luna ID`))
    # get pet ids
    pet <-
@@ -87,7 +87,7 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
    add_visit(t1_scan, con)
 
    cat("pet scan tp2\n")
-   #sheet <- readxl::read_xlsx(sheet_filename, sheet="x2 Scheduling") %>%
+   #sheet <- readxl::read_xlsx(pet_sheet_filename, sheet="x2 Scheduling") %>%
    #   filter(!is.na(`Luna ID`))
    t2_scan <-
       extract_pet_date(sheet, "x2 Scan Age", "x2 Scan") %>%
@@ -124,6 +124,75 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
       mutate(visitno=3) %>%
       add_visit(con)
 
+   ## 20190703: Year 3 on own sheet more uptodate
+
+   sched3 <- readxl::read_xlsx(pet_sheet_filename, sheet="x3 Scheduling") %>%
+      filter(!is.na(`Luna ID`)) %>%
+      mutate(dob = ymd(xlsx_date(as.character(DOB), minyear=1970)),
+             x3scanage= as.numeric(ymd(xlsx_date(`x3 Scan`)) - dob)/365.25,
+             x3behage = as.numeric(ymd(xlsx_date(`x3 Behvaioral`)) - dob)/365.25,
+             id = as.character(`Luna ID`)
+      )
+
+   # scan
+   t3s_sched <- sched3 %>%
+      extract_pet_date("x3scanage", "x3 Scan") %>%
+      filter(!is.na(vtimestamp))
+   # add
+   t3s_to_add <-
+      match_pet_cal(t3s_sched, cal, "scan") %>%
+      mutate(visit=3)
+   # actually add
+   add_visit(con, t3s_to_add)
+
+   # behave
+   t3b_sched <- sched3 %>%
+      extract_pet_date("x3behage", "x3 Behvaioral") %>%
+      filter(!is.na(vtimestamp))
+   # add
+   t3b_to_add <-
+      match_pet_cal(t3s_sched, cal, "behav") %>%
+      mutate(visit=3)
+   # actually add
+   add_visit(con, t3b_to_add)
+
+   ## whats missing
+   nocal <- rbind(
+                 anti_join(t3s_sched, t3s_to_add, by="id") %>% mutate(sheettype="scan"),
+                 anti_join(t3s_sched, t3s_to_add, by="id") %>% mutate(sheettype="behave"))
+   # filter to only these studies
+   cal_missing <-
+      cal %>% filter(study=="PET",
+           initials %in% nocal$initials,
+           visitno==3) %>%
+    right_join(nocal, by="initials", suffix=c(".gcal", ".sheet")) %>%
+    select(id, initials, sheetdate=vtimestamp.sheet, gcaldate=vtimestamp.gcal, caltype=vtype, sheettype)
+   # report
+   cat("missing/incongruent x3 scans: sheet vs gcal\n")
+   print.data.frame(cal_missing, row.names=F)
+
+   ## add visit notes on sched sheet
+   # note is assocated with timepoint not actual visit. so tie to scan (arbitraliy)
+   all_added_pet_scan <- tbl(con, "visit") %>%
+      inner_join(tbl(con, "visit_study")) %>%
+      inner_join(tbl(con, "enroll")) %>%
+      filter(study == "PET", vtype == "Scan", etype == "LunaID") %>%
+      select(pid, vid, id, vtimestamp, visitno) %>% collect
+  v2_note <-
+     all_added_pet_scan %>% filter(visitno==2) %>%
+     inner_join(sched3 %>% select(id, note=`Year 2 Notes`))
+  v3_note <-
+     all_added_pet_scan %>% filter(visitno==3) %>%
+     inner_join(sched3 %>% select(id, note=`Year 3 Notes`))
+
+  # add both to the db
+  pet_notes_added <-
+     rbind(v2_note, v3_note) %>%
+     filter(!is.na(note), str_length(note)>3) %>%
+     select(pid, vid, note) %>%
+     add_new_only(con, "note", .)
+
+
 
    ### CONTACT and NOTES
    # now that we have added everyone, get their pid into memory
@@ -157,6 +226,28 @@ populate_pet<- function(con, sheet_filename="sheets/PET.xlsx") {
       filter(!is.na(note), note != "") %>%
       inner_join(pid_person) %>% select(pid, note) %>%
       mutate(dropcode="OLDDBDSUBJ") %>%
+      add_new_only(con, "note", .)
+
+   ## ADM ID
+   print("ADM Ids")
+   adm_ids <-
+      readxl::read_xlsx(pet_sheet_filename, sheet="ASR-YSR Log") %>%
+      select(lunaid=`Luna ID`, id=`ASR/YSR ADM ID`, note=Notes) %>%
+      filter(!is.na(lunaid), !is.na(id)) %>%
+      inner_join(tbl(con, "enroll") %>%
+                 filter(etype=="LunaID") %>%
+                 select(pid, lunaid=id) %>% collect) %>%
+      mutate(etype="ADM")
+
+   adm_added <- adm_ids %>%
+      select(pid, id, etype) %>%
+      add_new_only(con, "enroll", .)
+
+   print("ADM note")
+   recruit_note <-
+      adm_ids %>%
+      select(pid, note) %>%
+      filter(!is.na(note)) %>%
       add_new_only(con, "note", .)
 
 }
