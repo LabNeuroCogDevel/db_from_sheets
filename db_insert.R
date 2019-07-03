@@ -59,7 +59,7 @@ cal_vtype_fix <- function(vtype) {
 
 # if any cell in date column is not a date (e.g. "1/9 or 1/10")
 # all dates will be given as days since 1899-12-30 as a string (e.g "43488")
-xlsx_date <- function(x, msg=NULL) {
+xlsx_date <- function(x, msg=NULL, minyear=2015) {
    if (length(x) == 0L) return() # otherwise would error at bottom
    if (is.null(msg)) msg <- substitute(x)
    if (is.character(x)) {
@@ -73,7 +73,7 @@ xlsx_date <- function(x, msg=NULL) {
        x[e_i] <- as.Date(as.POSIXct(xn[e_i], origin="1970-01-01"))
    }
 
-   if (!any(na.omit(between(year(x), 2015, 2024))))
+   if (!any(na.omit(between(year(x), minyear, 2024))))
      stop(msg, ": xlsx date parse failure (", head(x),
           " ): outside of range 2015-2024")
    x <- format(x, "%Y-%m-%d")
