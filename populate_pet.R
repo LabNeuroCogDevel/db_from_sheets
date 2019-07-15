@@ -51,7 +51,7 @@ match_pet_cal <- function(d, cal, vtype) {
 
 
 # do it all
-populate_pet<- function(con, pet_sheet_filename="sheets/PET.xlsx") {
+populate_pet<- function(con, pet_sheet_filename="sheets/PET.xlsx", petid_sheet="sheets/PET_idref.xlsx") {
 
    insert_study("PET", "mMR PET")
 
@@ -147,7 +147,7 @@ populate_pet<- function(con, pet_sheet_filename="sheets/PET.xlsx") {
    add_visit(t3s_to_add, con)
 
    # behave
-   print("x3behav scan")
+   print("x3behav behave")
    t3b_sched <- sched3 %>%
       extract_pet_date("x3behage", "x3 Behvaioral") %>%
       filter(!is.na(vtimestamp))
@@ -252,4 +252,41 @@ populate_pet<- function(con, pet_sheet_filename="sheets/PET.xlsx") {
       filter(!is.na(note)) %>%
       add_new_only(con, "note", .)
 
+   ## PET scan ID
+   pid_enroll <-
+      tbl(con, "enroll") %>%
+      filter(etype %like% "LunaID") %>%
+      collect %>%
+      select(pid, lunaid=`id`)
+   petids <-
+      readxl::read_xlsx(petid_sheet, sheet="Sheet1") %>%
+         mutate(lunaid=as.character(`LUNA ID`),
+                etype="PETID") %>%
+         left_join(pid_enroll, by="lunaid") %>%
+         select(-lunaid)
+   nopid <- petids[is.na(petids$pid), ]
+   if (nrow(nopid)>0L) {
+      warning(nrow(nopid), " PETIDs without lunas ids!")
+      print(nopid)
+   }
+
+   addpetid <- function(edatecol, idcol) {
+     theseids <- petids %>%
+         select(pid, edate=!!edatecol, id=!!idcol, etype) %>%
+         filter(!is.na(id)) %>%
+         mutate(edate=lubridate::ymd(edate))
+     added_id <- theseids %>% filter(!is.na(pid)) %>%
+          add_new_only(con, "enroll", ., idcols=c("pid", "id"))
+   }
+
+   racadded <- addpetid("Scan Date", "PET ID")
+   dtzbadded <- addpetid("DTBZDate", "DTBZID")
+
+   # ## pet scan id notes
+   # TODO: this could be by visit too?
+   idnotesadded <- petids %>%
+      select(ndate=`Scan Date`, pid, note=Note) %>%
+      filter(!is.na(note)) %>%
+      mutate(ndate=lubridate::ymd(ndate) %>% as.Date) %>%
+      add_new_only(con, "note", ., idcols=c("pid", "note"))
 }

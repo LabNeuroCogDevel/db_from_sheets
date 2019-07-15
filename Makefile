@@ -1,4 +1,9 @@
-add_db: all_gcal_events.tsv unpass 
+all: add_db
+
+lncddb: 
+	cd ../mdb_psql_R/; make
+
+add_db: all_gcal_events.tsv unpass lncddb
 	./02_populate_db_from_sheets.R
 
 unpass: sheets_pass.list xlsxunpass.jar

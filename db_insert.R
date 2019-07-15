@@ -287,7 +287,9 @@ add_visit <- function(d, con) {
                   "visitno", "ra", "study", "age", "study",
                   "cohort", "googleuri")
     if (!all(req_cols %in% names(d)))
-             paste(collapse=", ", setdiff(req_cols, names(d)))
+             stop("add_visit missing required columns: ",
+                  paste(collapse=", ", setdiff(req_cols, names(d))),
+                  "\n")
 
     # subset to just what we care about
     d <- d[, names(d) %in% req_cols]
