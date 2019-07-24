@@ -1,8 +1,9 @@
 .PHONY: all lncddb add_db unpass
 all: pgdump.sql
 
-arnold:
-	cd ../mdb_psql_R/; make push-arnold
+arnold: pgdump.sql
+	#cd ../mdb_psql_R/; make push-arnold
+	../mdb_psql_R/push_to_prod.bash arnold lncddb
 
 pgdump.sql: all_gcal_events.tsv unpass lncddb
 	./02_populate_db_from_sheets.R
