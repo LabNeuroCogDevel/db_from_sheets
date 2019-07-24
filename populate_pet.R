@@ -221,14 +221,19 @@ populate_pet<- function(con, pet_sheet_filename="sheets/PET.xlsx", petid_sheet="
       add_new_only(con, "note", .)
 
    ## Drop notes (TODO: assumes all drops will have notes)
-   added_drop_notes <-
+   pet_drop_notes <-
       sheet %>%
       filter(grepl("Dropped", Type, ignore.case=T)) %>%
       select(fname=`First Name`, lname=`Last Name`, note=Notes) %>%
       filter(!is.na(note), note != "") %>%
       inner_join(pid_person) %>% select(pid, note) %>%
-      mutate(dropcode="OLDDBDSUBJ") %>%
-      add_new_only(con, "note", .)
+      mutate(dropcode="OLDDBDSUBJ")
+
+   ## 20190717 - bad vein is not an old subject drop
+   pet_drop_notes$dropcode[pet_drop_notes$pid == 148 &&
+                             grepl("Dropped after 3rd", pet_drop_notes$note)] <-  "BAD_VEIN"
+
+   added_drop_notes <- pet_drop_notes %>% add_new_only(con, "note", .)
 
    ## ADM ID
    print("ADM Ids")
