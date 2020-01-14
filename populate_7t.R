@@ -175,7 +175,7 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
      match_7t_cal(cal, "scan", matchfactor=Inf)
   insert_7t(scansy2, con)
 
-  ## visit 1 EEG
+  ## visit 2 EEG
   print("7t: add eeg tp2 visits")
   eegy2 <- extract_7t_date(y2_sheet, "", "x2 EEG", "DOB") %>%
        match_7t_cal(cal, "eeg", matchfactor=Inf)
@@ -254,8 +254,11 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
             gsub("Inattention", "INATTENTIVE", .) %>%
             gsub("No contacts for MRI", "NO_ADULT", .) %>%
             gsub("Unable to contact", "NO_CONTACT", .) %>%
+            gsub("Couldn't contact", "NO_CONTACT", .) %>%
             gsub("Difficult schedule", "HARD_SUBJ", .)) %>%
      inner_join(pid_person) %>% select(pid, note, dropcode)
+
+  print(unique(drop_notes$dropcode))
   added_drop_notes <- add_new_only(con, "note", drop_notes)
 
   print("finished 7t")
