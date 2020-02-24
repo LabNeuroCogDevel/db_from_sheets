@@ -10,6 +10,7 @@ lookup="sheets_pass.list"
 [ ! -d sheets ] && mkdir sheets
 while read outf inf pass; do
  if [ -n "$pass" ]; then
+   echo $inf
    java -jar ./xlsxunpass.jar $inf sheets/$outf.xlsx $pass
  else
    cp $inf $outf.xlsx

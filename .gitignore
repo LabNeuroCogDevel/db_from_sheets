@@ -1,8 +1,12 @@
 google_cred_pullpython.json
 cal.ini
+txt/
 ~/.google_apis_auth.RDS
 secret.json
 sheets_pass.list
 sheets/
 __pycache__/
 .cal
+pgdump*
+xlsxunpass*
+.*

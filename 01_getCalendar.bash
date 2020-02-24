@@ -17,9 +17,8 @@ echo querying from $max onward, applying to $(wc -l $caltsv)
 (
  gcal $max $(date -d yesterday +%F)
  cat $caltsv;
-) | sort -nr|uniq  > $caltsv.tmp
-mv $caltsv.tmp $caltsv
+) | sort -nr|uniq  | mkifdiff $caltsv
 
-echo finished, now have $(wc -l $caltsv)
-echo making csv
-./parse_gcal.R 
+echo finished, now have $(wc -l $caltsv) in $(stat -c "%n at %y" $caltsv)
+#echo making csv
+#./parse_gcal.R 

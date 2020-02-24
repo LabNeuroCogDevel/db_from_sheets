@@ -42,10 +42,13 @@ extract_7t_date <- function(d, agevar, vdatevar, dobvar=NULL) {
       vdate <- lubridate::ymd(res$vtimestamp)
       res$age <- as.numeric(vdate - dob)/365.25
    }
-   res %>% select(id=`Luna ID`,
+   res %>%
+      select(id=`Luna ID`,
               age,
               vtimestamp,
-              initials)
+              initials) %>%
+      # 20200114 consistant lunaid: '11748; 11515' -> '11748'
+      mutate(id=gsub(";.*", "", id))
 }
 
 match_7t_cal <- function(d, cal, vtype, matchfactor=2) {
@@ -119,7 +122,7 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
      add_aux_id(con, .)
 
   print("7t: add dropped lunaids")
-  sevent_xlsx_drop <- readxl::read_xlsx(sheet_filename_7t, sheet="Dropped")
+  sevent_xlsx_drop <- readxl::read_xlsx(sheet_filename_7t, sheet="Dropped (Y1)")
   brn_mch7t_drop <- idcols_7t(sevent_xlsx_drop) %>%
      filter(!is.na(fname), !is.na(lname))
 
