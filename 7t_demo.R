@@ -5,29 +5,30 @@ library(readxl)
 library(stringr)
 library(lubridate)
 library(magrittr)
+library(LNCDR)
 
 # qualtircs
-fl <- Sys.glob('/Volumes/L/bea_res/Data/Temporary Raw Data/7T/1*_2*/*selfreport.csv')
+fl <- Sys.glob("/Volumes/L/bea_res/Data/Temporary Raw Data/7T/1*_2*/*selfreport.csv")
 demog_ext <- function(f) {
     d <- read.csv(f, skip=1);
     idx <- names(d) %>% grep(pattern='(ETHNICITY|RACE).*consider.yourself|Your.gender.|birthday..MM')
     if(length(idx) != 4) return()
     d <- d[nrow(d),idx]
     names(d) <- gsub(".*gender.*", "Sex", names(d)) %>%
-         gsub('.*birthday.*','DOB',.) %>%
-         gsub('\\..*','',.) 
+         gsub(".*birthday.*", "DOB", .) %>%
+         gsub("\\..*", "", .)
     d$ID <- ld8from(f)
     # goes here (slower) b/c
     # errors if mergeing above with bind_rows before this data clean
     d %>%
-        separate(ID,c('ID','Date'),sep="_") %>%
+        separate(ID, c("ID", "Date"), sep="_") %>%
         mutate(Sex = as.character(Sex),
                DOB = as.character(DOB),
                # Black==AFRICAN AMERICAN, all "race" are in caps. rm everything else
                # paste back together lowercase and sep by ,
                # "Not" is an option. we can remove that
-               eth = gsub('AFRICAN AMERICAN', '', RACE) %>%
-                     str_extract_all('[A-Z]{3,}') %>%
+               eth = gsub("AFRICAN AMERICAN", "", RACE) %>%
+                     str_extract_all("[A-Z]{3,}") %>%
                      sapply(function(x)
                          x %>% tolower %>%
                          Filter(function(e) e!='not', .) %>%
@@ -42,8 +43,8 @@ demog_ext <- function(f) {
 }
 
 demog_qualt_raw <-
- lapply(fl,demog_ext) %>%
- bind_rows 
+ lapply(fl, demog_ext) %>%
+ bind_rows
 
 # update those who didn't put sex or db in the survey
 db_replace <-
@@ -58,7 +59,7 @@ db_replace <-
              natural join enroll
              where id in (%s)") %>%
     db_query %>%
-    rename(ID=id, Sex=sex, DOB=dob) 
+    rename(ID=id, Sex=sex, DOB=dob)
 
 demog_qualt <-
     demog_qualt_raw %>%
@@ -144,6 +145,7 @@ demog %<>%
 
 # save
 write.csv(demog, "7Tdemo.csv", row.names=F)
+# demog <- read.csv("7Tdemo.csv")
 
 # ----
 # quick stats
@@ -162,8 +164,35 @@ counthisp <-
    spread(Sex, n)
 
 # finally print
-pd <- function(...) print.data.frame(row.names=F,...)
+pd <- function(...) print.data.frame(row.names=F, ...)
 demog %>% select(Ageg, isdrop) %>%  table
 pd(countsimp)
 pd(counthisp)
 
+top_ids <- unique(info$ID[!info$SubDropped] %>% as.numeric)
+demog_ids <- unique(demog$ID[!demog$isdrop])
+# includes drops
+db_id <- db_query("
+   select id from person
+   natural join visit natural join visit_study natural join enroll
+   where study like '%Brain%' and etype like 'LunaID'")$id
+# load participation flow
+flow <- read_xlsx("sheets/7T.xlsx", "Enrolled")
+flowid <- flow$`Luna ID`
+fileid <- Sys.glob("/Volumes/Hera/Projects/7TBrainMech/subjs/1*_2*/") %>%
+   ld8from() %>% gsub("_.*", "", .)
+
+saydiff <- function(a, b)
+   cat(" not in", substitute(a), "\n\t",
+       paste(collapse=", ", setdiff(b, a)), "\n",
+       "not in", substitute(b), "\n\t",
+       paste(collapse=", ", setdiff(a, b)),
+       "\n")
+
+# not in first but in second
+saydiff(top_ids, db_id)
+saydiff(top_ids, flowid)
+saydiff(top_ids, demog_ids)
+saydiff(demog_ids, fileid)
+saydiff(demog_ids, flowid)
+saydiff(flowid, fileid)
