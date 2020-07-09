@@ -101,12 +101,26 @@ add_new_only <- function(con, tname, d, idcols=names(d), add=T) {
 }
 
 # okay if this fails -- only need to have inserted once
-#will fail if tried again
+#will fail if tried again.
+# con is global
 insert_study <- function(study, grant) {
    studydf <- data.frame(study=study, grantname=grant)
    tryCatch( db_insert_into(con, "study", studydf),
             error=function(e)
                warning("failed to insert ", study, " study, probably okay")
+           )
+}
+
+# insert task
+insert_task <- function(con, task, tdesc, modes=c('Scan'), measures=NA) {
+   measures <- if(is.na(measures)) NA else as.character(jsonlite::toJSON(measures))
+   modes <- jsonlite::toJSON(modes) %>% as.character
+   tbldf <- data.frame(task=task, tdesc=tdesc,
+                       modes=modes,
+                       measures=measures)
+   tryCatch( db_insert_into(con, "task", tbldf),
+            error=function(e)
+               warning("failed to insert ", task, " task, probably okay")
            )
 }
 
@@ -234,9 +248,10 @@ add_id_to_db <- function(con, d,  double_ok_list=NULL) {
       filter(!duplicated(paste(fname, lname, sex)))
 
    # check db: have we already enrolled these people
+   just_pids <- pid$pid # 20200709 - pid$pid in filter causes error?
    have_enroll <-
       tbl(con, "enroll") %>%
-      filter(etype %like% "LunaID", pid %in% pid$pid) %>%
+      filter(etype %like% "LunaID", pid %in% just_pids) %>%
       collect
 
    # if we are allowing muple lunaIDs for a single pid

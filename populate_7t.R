@@ -9,7 +9,10 @@ idcols_7t <- function(sevent_xlsx) {
     mutate(id=as.character(id),
            dob=lubridate::ymd(dob),
            adddate= xlsx_date(adddate),
-           hand="U") %>%
+           hand="U",
+           # 20200417 - change failing source (too long)
+           # TODO: substr at max length
+           source=gsub("Gmail \\(mom said didn't remember how she heard about study\\)", "Gmail", source)) %>%
     filter(!is.na(id))
 }
 aux_id_7t <- function(d, id_colname, etype){
@@ -51,6 +54,33 @@ extract_7t_date <- function(d, agevar, vdatevar, dobvar=NULL) {
       mutate(id=gsub(";.*", "", id))
 }
 
+add_scan_as_task <- function(con, ws="/Volumes/L/bea_res/7T/fMRI/7T_fMRI_Scan_Log.xlsx") {
+   pids <- LNCDR::db_query("select pid, vid, id || '_' ||  to_char(vtimestamp, 'YYYYmmdd') as ld8
+                          from visit natural join enroll where etype like 'LunaID'")
+   slog <- readxl::read_xlsx(ws)
+   d <- merge(pids,slog,  by.y="MR Center ID", by.x="ld8", all.y=T) %>%
+       tidyr::separate(`MT-R`,c("MT1","MT2"), sep=",") %>%
+       mutate_at(vars(matches("Rest|MGS|MPR|R2|Spec|MT|Confid")),
+                 function(x) gsub('.*,','',x) %>% as.numeric)
+   names(d) <- names(d) %>% gsub(' ', '_', .)
+       
+   d$measures <- d%>%select(-ld8, -pid, -vid) %>% jsonlite::toJSON()
+   d$task <- "ScanLog"
+
+   missing <- d %>% filter(is.na(vid))
+   if(nrow(missing)>0L) {
+       cat("missing visits for MR log for:\n")
+       missing %>%
+           select(matches('ld8|RA$|MPR|MGS')) %>%
+           print.data.frame(row.names=F)
+   }
+
+   # only good ones
+   vtadd <- d %>% filter(!is.na(vid)) %>% select(vid, task, measures)
+
+   add_new_only(con, 'visit_task', vtadd, idcols=c('vid','task'), add=T)
+}
+
 match_7t_cal <- function(d, cal, vtype, matchfactor=2) {
    m <-
      d %>%
@@ -76,6 +106,8 @@ match_7t_cal <- function(d, cal, vtype, matchfactor=2) {
               age=age.x)
 
      nmatch <- length(which(!is.na(m$sdate)))
+     # 0*Inf == NaN. we want Inf
+     if(nmatch==0 && !is.finite(matchfactor)) nmatch=1
      if (nrow(d) > matchfactor*nmatch)
         stop("too few visit <-> calendar vtimestamp/sdate matches! ",
              nmatch, " out of ", nrow(d))
@@ -105,6 +137,15 @@ get_ids <- function(d) {
    select(ld8, `Luna ID`, edate=vdate)
 }
 
+cal_7t <- function(calfile="txt/cal_events.csv"){
+  calv <-
+     read.csv(calfile) %>%
+     mutate(sdate=ymd_hms(sdate))
+  cal <- calv %>%
+      filter(study=="7T", !grepl("cancelled", desc)) %>%
+      mutate(vtimestamp=format(sdate, "%Y-%m-%d")) %>%
+      rename(googleuri=eid)
+}
 
 populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
   sevent_xlsx <- readxl::read_xlsx(sheet_filename_7t, sheet="Enrolled")
@@ -137,13 +178,7 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
   #calve <- gCalendar$new(creds=creds, id="lunalncd@gmail.com")$events
 
   print("7t: pasre calendar")
-  calv <-
-     read.csv("txt/cal_events.csv") %>%
-     mutate(sdate=ymd_hms(sdate))
-  cal <- calv %>%
-      filter(study=="7T", !grepl("cancelled", desc)) %>%
-      mutate(vtimestamp=format(sdate, "%Y-%m-%d")) %>%
-      rename(googleuri=eid)
+  cal <- cal_7t()
   # "study"      "visitno"    "vtype"      "initials"   "age"
   # "sdate"      "durhr"      "vscore"     "desc"       "vtimestamp"
 
@@ -151,6 +186,17 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
   insert_study("BrainMechR01", "BrainMechR01")
 
   ## visit 1 scan
+
+  y2_sheet <- readxl::read_xlsx(sheet_filename_7t, sheet="Y2 scheduling")
+  # TODO: make below a bit cleaner
+  #colinfo <- list(
+  #    behave1=list(sevent_xlsx, "Age @ Y1 Behav", "Y1 Behav Date"),
+  #    scan1  =list(sevent_xlsx, "Age @ Y1 MRI", "Y1 MRI Date"),
+  #    eeg1   =list(sevent_xlsx, "", "Y1 EEG Date", "DOB"),
+  #    behave2=list(y2_sheet, "", "x2 Beh", "DOB"),
+  #    scan2  =list(y2_sheet, "", "x2 Scan", "DOB"),
+  #    eeg2   =list(y2_sheet, "", "x2 EEG", "DOB")
+  #)    
 
   print("7t: add behave visits")
   extract_7t_date(sevent_xlsx, "Age @ Y1 Behav", "Y1 Behav Date") %>%
@@ -163,12 +209,12 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
 
   ## visit 1 EEG
   print("7t: add eeg tp1 visits")
+  eegy1 <- extract_7t_date(sevent_xlsx, "", "Y1 EEG Date", "DOB")
   eegt1 <- extract_7t_date(sevent_xlsx, "", "Y1 EEG Date", "DOB") %>%
        match_7t_cal(cal, "eeg")
   insert_7t(eegt1, con)
 
   ## Year 2
-  y2_sheet <- readxl::read_xlsx(sheet_filename_7t, sheet="Y2 scheduling")
   print("7t: add behave tp2 visits")
   behy2 <- extract_7t_date(y2_sheet, "", "x2 Beh", "DOB") %>%
        match_7t_cal(cal, "behav", matchfactor=Inf)
@@ -180,6 +226,7 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
 
   ## visit 2 EEG
   print("7t: add eeg tp2 visits")
+  y2eeg <- extract_7t_date(y2_sheet, "", "x2 EEG", "DOB") 
   eegy2 <- extract_7t_date(y2_sheet, "", "x2 EEG", "DOB") %>%
        match_7t_cal(cal, "eeg", matchfactor=Inf)
   insert_7t(eegy2, con)
@@ -200,7 +247,7 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
         str_extract("(?<=7TBrainMech/)[^/]*"),
      ld8 = str_extract(raw_links, "(?<=rawlinks/)[^/]*"),
      stringsAsFactors =F
-  )
+  ) %>% unique
 
   #unames <- do.call(intersect, lapply(list(sevent_xlsx,sevent_xlsx_drop), names))
 
@@ -264,5 +311,8 @@ populate_7t <- function(con, sheet_filename_7t="sheets/7T.xlsx") {
   print(unique(drop_notes$dropcode))
   added_drop_notes <- add_new_only(con, "note", drop_notes)
 
+  # add ScanLog
+  insert_task(con,'ScanLog','MR sequence numbers and scan ratings')
+  add_scan_as_task(con)
   print("finished 7t")
 }
