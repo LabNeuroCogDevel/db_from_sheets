@@ -22,7 +22,9 @@ calv <-
     mutate(sdate=ymd_hm(paste(sdate, stime)),
            edate=ymd_hm(paste(edate, etime)),
            durhr=as.numeric(edate-sdate)/60,
-           vscore=str_extract(desc, "[0-9.]+ ?$")%>%as.numeric,
+           # remove (eye: ...) score
+           vscore=str_extract(desc %>% gsub(' ?\\(.?eye.*?\\) ?','',.),
+                              "[0-9.]+ ?$")%>%as.numeric,
            initials=str_extract(desc, "\\([A-Z]{2}\\)") %>% gsub("[()]", "", .),
            study=str_extract(desc%>%toupper, "(7T|COG|PET|P5|SZ|SCHIZOPHRENIA)"),
            study=ifelse(study %in% c("SZ", "SCHIZOPHRENIA"), "P5", study), # Sz is P5
