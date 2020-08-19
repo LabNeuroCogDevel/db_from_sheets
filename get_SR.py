@@ -4,36 +4,57 @@
 # put lunaid on scored self report (ASR only)
 # 20171023 for BTC
 
-import pandas, numpy
+import pandas
+import numpy
 import glob
 
-## read sheet, make initials column
-asrlog = pandas.read_excel("sheets/PET.xlsx",sheetname="ASR-YSR Log")
-idlookup = asrlog[['Luna ID','ASR/YSR ADM ID']]
-# throws warning, it's okay
-idlookup['initials1'] =  \
-        [ a['First Name'][0] + a['Last Name'][0] for i,a in asrlog.iterrows() ]
 
-
-## read in all scored files
+# ## read in all scored files
 def fchar(c):
-    return([' ' if pandas.isna(x) else x[0]  for x in c])
+    return([' ' if pandas.isna(x) else x[0] for x in c])
 
-files=glob.glob('/Volumes/L/bea_res/PET-fMRI/Screening/*SR/*/*_scored.CSV')
-master = pandas.concat([ pandas.read_csv(f) for f in files ] ).\
-         assign(finit= fchar(master.firstname),
-                linit=fchar(master.lastname)).\
-         assign(initials2=master.finit+master.linit)
-master['initials2'] = [ m['firstname'][0] + m['lastname'][0] for i,m in master.iterrows()]
 
-## merge
-d=pandas.merge(idlookup,master,left_on='ASR/YSR ADM ID',right_on='id')
+# ## read sheet, make initials column
+# initially from
+# /Volumes/L/bea_res/PET-fMRI/PET-fMRI_participation_flow.xlsx
+asrlog = pandas.read_excel("sheets/PET.xlsx", sheet_name="ASR-YSR Log")
+FL_id = [a['First Name'][0] + a['Last Name'][0] for i, a in asrlog.iterrows()]
+idlookup = asrlog[['Luna ID', 'ASR/YSR ADM ID']].\
+           assign(FL_id=FL_id)
+idlookup = idlookup[idlookup['Luna ID'] != 'xxx']
 
-d.to_csv('asr_ysr.csv')
+# read ain all scored CSV files
+files = glob.glob('/Volumes/L/bea_res/PET-fMRI/Screening/*SR/*/*_scored.CSV')
+print(f"reading {len(files)} files")
+all_csv = pandas.concat([pandas.read_csv(f) for f in files])
+main = all_csv.\
+       assign(finit=lambda d: fchar(d.firstname),
+              linit=lambda d: fchar(d.lastname)).\
+       assign(FL_score=lambda d: d.finit + d.linit)
+# main['FL_score'] = [m['firstname'][0] + m['lastname'][0]
+#                        for i, m in main.iterrows()]
+print(f"have {main.shape[0]} rows for {idlookup.shape[0]} id entries")
 
-## check: same number of rows, now mismatched initials
-d.shape[0] == master.shape[0]
-len(numpy.where(d['initials1'] != d['initials2'])[0])==0
+# ## merge
+d = pandas.merge(idlookup, main, left_on='ASR/YSR ADM ID', right_on='id')
 
-## end (for cellmode)
+# ## check: same number of rows, now mismatched initials
+bad = d['FL_id'] != d['FL_score']
+print(f"sanity checks: Name Initials dont match for {len(numpy.where(bad)[0])}")
+badids = d[bad]['Luna ID'].values
+badsr = d[bad]['ASR/YSR ADM ID'].values
+inlog = asrlog[[x in badsr for x in asrlog['ASR/YSR ADM ID']]][['Luna ID','ASR/YSR ADM ID','First Name', 'Last Name']]
+incsv = all_csv[[x in badsr for x in all_csv['id']]][['id','firstname', 'lastname']]
+#print(d[bad][['Luna ID','ASR/YSR ADM ID', 'FL_id', 'FL_score']])
+print(inlog)
+print(incsv)
 
+# assert d.shape[0] == main.shape[0]
+# assert len(numpy.where(d['FL_id'] != d['FL_score'])[0]) == 0
+
+print(f"writting asr_ysr.csv")
+name_columns = ["firstname", "lastname", "middlename",
+                "othername", "finit", "linit", "FL_score", "FL_id"]
+d.drop(columns=name_columns).to_csv('asr_ysr.csv')
+
+# ## end (for cellmode)
