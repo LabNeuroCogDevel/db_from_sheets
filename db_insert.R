@@ -161,6 +161,8 @@ add_aux_id <- function(con, d) {
       unique
 
    if (nrow(to_add)>0L) {
+      print("adding aux ids:")
+      print(to_add)
       db_insert_into(con, "enroll", to_add) %>%
       return()
    } else {
@@ -212,6 +214,17 @@ add_id_to_db <- function(con, d,  double_ok_list=NULL) {
    people_to_add <- d %>%
       anti_join(have_lunaid, by="id") %>%
       anti_join(have_pid, by=c("fname", "lname"))
+
+   bad_values <- people_to_add %>%
+      filter(is.na(dob) | is.na(fname) | is.na(lname) | is.na(sex))
+   if (nrow(bad_values) > 0L) {
+     cat("WARNING: missing values for people to add\n")
+     print.data.frame(bad_values %>% select(fname, lname, sex, dob),
+                      row.names=F)
+   }
+
+
+   people_to_add <- people_to_add %>% anti_join(bad_values)
    # add people not in database (as either a person or lunaid)
    tryCatch({
       people_to_add %>%
@@ -399,6 +412,12 @@ add_visit <- function(d, con) {
        # db_insert_into(con, "visit_study", .)
     }
 
+   nora <- vids_with_study %>% with(is.na(vid) | is.na(ra))
+   if(length(which(nora))>0L) {
+      print("BAD visit info!")
+      print(vids_with_study[nora,])
+      vids_with_study <- vids_with_study[!nora,]
+   }
    # add visit_action -- 'complete' if date is old, 'sched' otherwise
    vids_with_study %>%
       mutate(action=ifelse(vtimestamp < today(), "complete", "sced")) %>%
