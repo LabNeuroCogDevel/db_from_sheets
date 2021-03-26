@@ -31,7 +31,7 @@ read_gcal <- function(txt_file="txt/cal_events.csv") {
              googleuri=eid)
 }
 
-get_cal_ra <- function(desc, RAs=c("KS", "JF", "JL", "JG", "MM", "LT")) {
+get_cal_ra <- function(desc, RAs=c("KS", "JF", "JL", "JG", "MM", "LT", "AF", "NR")) {
    ra_regexp <- paste(sep="|", collapse="|", RAs)
    # get ra from desc
    ra_f <-  sprintf("(?<=- )(%s)",      ra_regexp) %>% str_extract(desc, .)
@@ -172,7 +172,7 @@ add_aux_id <- function(con, d) {
 }
 
 # insert person, get pid, insert intoenroll
-add_id_to_db <- function(con, d,  double_ok_list=NULL) {
+add_id_to_db <- function(con, d,  double_ok_list=NULL, missing_okay=NULL) {
 
    all_enroll <-
       tbl(con, "enroll") %>%
@@ -197,6 +197,10 @@ add_id_to_db <- function(con, d,  double_ok_list=NULL) {
       select(pid, fname, lname, dob)  %>%
       merge(d, by=c("fname", "lname", "dob"))
 
+   # 20210323
+   # we have repeat: 7t: '11748; 11515', '11487' is '11478' ?!
+   if(!is.null(missing_okay))
+      missing_id <- missing_id %>% filter(!id %in% missing_okay)
    if (nrow(missing_id) > 0L){
       cat("have person but not lunaid in database!?\n")
       cat("in sheet:\n")
@@ -413,8 +417,10 @@ add_visit <- function(d, con) {
     }
 
    nora <- vids_with_study %>% with(is.na(vid) | is.na(ra))
-   if(length(which(nora))>0L) {
-      print("BAD visit info!")
+   n_nora <- length(which(nora))
+   if(n_nora>0L) {
+      cat("BAD visit info: NA vid or RA!", n_nora, "\n")
+      cat("do you need to update get_cal_ra RA list?!\n")
       print(vids_with_study[nora,])
       vids_with_study <- vids_with_study[!nora,]
    }
@@ -447,4 +453,70 @@ add_new_contacts <- function(con, contacts, pid_person) {
    # make sure we aren't double adding
    added_contacts <- add_new_only(con, "contact", c_as_db,
                                   c("pid", "who", "cvalue"))
+}
+
+na_col <- function(d, col, source="") {
+   if (!col %in% names(d)) stop(glue::glue('no {col} in dataframe {source}'))
+   missing_col <- is.na(d[[col]])
+   if (any(missing_col)) {
+       n_missing <- length(which(missing_col))
+       cat(glue::glue("# WARNING: {col} is na for {n_missing}/{nrow(d)} {source}\n\n"))
+       if(n_missing < 10) print(ret[missing_col,1:min(5,ncol(d))])
+   }
+   return(missing_col)
+}
+
+add_pid <- function(con, d, source="") {
+   if (!'LunaID' %in% names(d)) stop('need LunaID in dataframe')
+   # add pid to df using db luna ids
+   # remove any that aren't in db (no pid) with warnings
+   pid_luna <- tbl(con, 'enroll') %>%
+       filter(etype == 'LunaID') %>%
+       select(pid, LunaID=id) %>% collect
+   d_pid <- merge(d, pid_luna, all.x=T, by="LunaID")
+
+   missing_pid <- na_col(d, 'pid', source)
+   if (any(missing_pid)){
+       n_missing <- length(which(missing_pid))
+       cat(glue::glue("WARNING: {source} missing pids for {n_missing}\n"))
+       d_pid[missing_pid,] %>% select(LunaID, vdate, `7TROWID`) %>%
+           print.data.frame(row.names=F)
+   }
+   d_pid <- d_pid[!missing_pid,]
+}
+
+# use vtimestamp and study to merge with db. add vid to dataframe
+# requires pid. 
+add_vid <- function(d, vdate, study="'%'", source="") {
+   if (!'pid' %in% names(d)) stop('need pid in dataframe')
+   if (!'vdate' %in% names(d)) stop('need vdate in dataframe')
+   all_visits <- LNCDR::db_query(glue::glue('
+     select pid, vid, vtimestamp::date as vdate
+     from visit natural join visit_study
+     where study like {study}'))
+
+   ret <- merge(d, all_visits, by=c('pid','vdate'), all.x=T)
+   missing_vid <- na_col(ret, 'vid', paste0(source, ' study ', study))
+   return(ret[!missing_vid,])
+}
+
+mk_visit_task <- function(d, task_name, con, idcols=c('vid','task'), add=T) {
+   if (!'vid' %in% names(d)) stop('need vid in dataframe')
+   d$measures <- d %>% select(-matches('(id|pid|vid)$')) %>% jsonlite::toJSON()
+   d$task <- task_name
+   visit_tasks <- d %>% select(vid, task, measures) %>% filter(!is.na(vid))
+   add_new_only(con, 'visit_task', visit_tasks, idcols=idcols, add=add)
+}
+
+
+# collapse T/F of personal values to get list of ethnicities
+# assume ROWID column name is the identifier
+demog_derive_eth <- function(demog) {
+   eth <- demog %>%
+    select(ROWID,hispanic,american_indian,asian,black,hawaiian,white) %>% 
+    gather('eth','ethbool',-ROWID) %>%
+    filter(ethbool==T) %>%
+    group_by(ROWID) %>%
+    summarise(eth=paste(collapse=",",sort(unique(eth))))
+   merge(eth,demog,by="ROWID")
 }
