@@ -1,3 +1,4 @@
+#!/usr/bin/env Rscript
 library(dplyr)
 library(tidyr)
 library(xlsx)
@@ -12,7 +13,20 @@ fl <- Sys.glob("/Volumes/L/bea_res/Data/Temporary Raw Data/7T/1*_2*/*selfreport.
 demog_ext <- function(f) {
     d <- read.csv(f, skip=1);
     idx <- names(d) %>% grep(pattern='(ETHNICITY|RACE).*consider.yourself|Your.gender.|birthday..MM')
-    if(length(idx) != 4) return()
+    if(length(idx) != 4) {
+        warning(f, " has ", length(idx), "!=4 eth,race,gender,bday cols\n\t", paste(collapse="\n\t", names(d)[idx]))
+        eth_idxs <- grep("AMERICAN INDIAN|ASIAN|BLACK|HAWAIIAN|WHITE", names(d))
+        if (length(eth_idxs) != 4 || length(idx) != 3){
+            warning("also cannot find uncollapsed eth")
+            return()
+        }
+
+        d$RACE <- d[,eth_idxs] %>%
+            mutate_all(as.character) %>%
+            Filter(f=function(x) !is.na(x) ) %>%
+            paste(collapse=" ,")
+        idx <- c(idx, grep("RACE", names(d)))
+    }
     d <- d[nrow(d),idx]
     names(d) <- gsub(".*gender.*", "Sex", names(d)) %>%
          gsub(".*birthday.*", "DOB", .) %>%
@@ -36,8 +50,8 @@ demog_ext <- function(f) {
                hispanic=ifelse(is.na(ETHNICITY), NA, !grepl('^Not', ETHNICITY)),
                Sex= case_when(
                        Sex == "FALSE" ~ NA_character_,
-                       grepl("M",Sex,ign=T) ~ "M",
-                       grepl("F",Sex,ign=T) ~ "F",
+                       grepl("^[Mm]",Sex,ign=T) ~ "M",
+                       grepl("^[Ff]",Sex,ign=T) ~ "F",
                        TRUE ~ NA_character_)) %>%
         select(ID,Date,DOB,Sex,hispanic,eth)
 }
@@ -63,22 +77,29 @@ db_replace <-
 
 demog_qualt <-
     demog_qualt_raw %>%
-    merge(db_replace, by="ID", suffixes = c("",".rep"),all.x=T) %>%
-    mutate(Sex=ifelse(is.na(Sex),Sex.rep,Sex),
-           DOB=ifelse(is.na(mdy(DOB)),DOB.rep,DOB),
-           Age=as.numeric(ymd(Date) - mdy(DOB))/365.25) %>%
-    select(-matches(".rep$"), -DOB)
+    merge(db_replace, by="ID", suffixes = c("",".db"),all.x=T) %>%
+    mutate(Sex=ifelse(is.na(Sex),Sex.db,Sex),
+           DOB=ifelse(is.na(mdy(DOB)),DOB.db,DOB),
+           Age=as.numeric(ymd(Date) - mdy(DOB))/365.25)
 
+missingsex <- demog_qualt %>% filter(is.na(Sex))
+badsex <- demog_qualt %>% filter(Sex.db != Sex, !is.na(Sex))
+if (nrow(badsex)>0L) {
+    warning("have ",nrow(badsex), " with mismatched sex")
+    print.data.frame(badsex, row.names=F)
+}
 
 # ----
 
+# done by 00_getsheets.bash 
 # paper (put into google doc)
-gsurl<- 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTBsSDjJ27hO6nOFyyyHPlLnDCms3dLWgw92dVkeue7UB4o1wZ9tMMe1Z-EA1ZM1g16pQW4HiCb62gu/pub?output=xlsx'
-curl::curl_download(gsurl, "sheets/7T_packet.xlsx")
+#gsurl<- 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTBsSDjJ27hO6nOFyyyHPlLnDCms3dLWgw92dVkeue7UB4o1wZ9tMMe1Z-EA1ZM1g16pQW4HiCb62gu/pub?output=xlsx'
+#curl::curl_download(gsurl, "sheets/7T_packet.xlsx")
 
 # pull tables in from excel doc
 # reduce info to: ID, isdrop
 info <- read_xlsx("sheets/7T_packet.xlsx", sheet="Top")
+names(info)[1] <- "ID"
 isdrop <-
     info %>%
     group_by(ID) %>%
@@ -92,7 +113,7 @@ d <- merge(info %>% select(-Date), demog_sheet, by=c("7TROWID", "ID")) %>%
 # check who is in the top sheet but does not have demographic
 dids <- isdrop$ID %>% gsub(";.*", "", .) %>% as.numeric
 idmissing <- setdiff(dids, d$ID) # missing
-print(paste(collpase=" ", idmissing))
+print(paste0(collapse=" ", idmissing))
 
 # merge ethnticities into on column
 #  hack: go to long format (many rows per subject)
@@ -120,8 +141,12 @@ eth <-
  mutate(Date=format(Date,"%Y%m%d"))
 
 demog <-
-    rbind(eth %>% mutate(from="sheet"),
-          demog_qualt %>% mutate(from="qualt")) %>%
+    rbind(eth %>%
+           mutate(from="sheet"),
+          demog_qualt %>%
+           select(-matches(".db$"), -DOB) %>%
+           mutate(from="qualt") 
+          ) %>%
     merge(isdrop %>% mutate(ID=as.numeric(ID)), by="ID",all.x=T) %>%
     # remove sheet when we also have qualt
     group_by(ID,Date) %>% mutate(n=n()) %>% filter(n<2|from=="qualt") %>%
@@ -183,7 +208,8 @@ fileid <- Sys.glob("/Volumes/Hera/Projects/7TBrainMech/subjs/1*_2*/") %>%
    ld8from() %>% gsub("_.*", "", .)
 
 saydiff <- function(a, b)
-   cat(" not in", substitute(a), "\n\t",
+   cat("# ", substitute(a), "vs ", substitute(b), "\n",
+       " not in", substitute(a), "\n\t",
        paste(collapse=", ", setdiff(b, a)), "\n",
        "not in", substitute(b), "\n\t",
        paste(collapse=", ", setdiff(a, b)),
